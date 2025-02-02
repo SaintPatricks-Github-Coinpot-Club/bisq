@@ -31,7 +31,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-import java.util.function.Predicate;
+import java.util.function.LongPredicate;
 import java.util.stream.Collectors;
 
 import lombok.extern.slf4j.Slf4j;
@@ -134,15 +134,16 @@ public class VolumeChartDataModel extends ChartDataModel {
     ///////////////////////////////////////////////////////////////////////////////////////////
 
     private Map<Long, Long> getVolumeByInterval(Function<List<TradeStatistics3>, Long> getVolumeFunction) {
+        var toTimeIntervalFn = toCachedTimeIntervalFn();
         return getVolumeByInterval(tradeStatisticsManager.getObservableTradeStatisticsSet(),
-                tradeStatistics -> toTimeInterval(Instant.ofEpochMilli(tradeStatistics.getDateAsLong())),
+                tradeStatistics -> toTimeIntervalFn.applyAsLong(Instant.ofEpochMilli(tradeStatistics.getDateAsLong())),
                 dateFilter,
                 getVolumeFunction);
     }
 
     private Map<Long, Long> getVolumeByInterval(Collection<TradeStatistics3> collection,
                                                 Function<TradeStatistics3, Long> groupByDateFunction,
-                                                Predicate<Long> dateFilter,
+                                                LongPredicate dateFilter,
                                                 Function<List<TradeStatistics3>, Long> getVolumeFunction) {
         return collection.stream()
                 .collect(Collectors.groupingBy(groupByDateFunction))

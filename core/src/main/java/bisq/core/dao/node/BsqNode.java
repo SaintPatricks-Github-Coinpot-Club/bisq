@@ -56,7 +56,7 @@ public abstract class BsqNode implements DaoSetupService {
     private final String genesisTxId;
     private final int genesisBlockHeight;
     private final ExportJsonFilesService exportJsonFilesService;
-    private final DaoStateSnapshotService daoStateSnapshotService;
+    protected final DaoStateSnapshotService daoStateSnapshotService;
     private final P2PServiceListener p2PServiceListener;
     protected boolean parseBlockchainComplete;
     protected boolean p2pNetworkReady;
@@ -72,6 +72,7 @@ public abstract class BsqNode implements DaoSetupService {
     // (not parsed) block.
     @Getter
     protected int chainTipHeight;
+    protected volatile boolean shutdownInProgress;
 
 
     ///////////////////////////////////////////////////////////////////////////////////////////
@@ -112,6 +113,7 @@ public abstract class BsqNode implements DaoSetupService {
 
             @Override
             public void onDataReceived() {
+                onP2PNetworkReady();
             }
 
             @Override
@@ -125,7 +127,6 @@ public abstract class BsqNode implements DaoSetupService {
 
             @Override
             public void onUpdatedDataReceived() {
-                onP2PNetworkReady();
             }
         };
     }
@@ -156,6 +157,7 @@ public abstract class BsqNode implements DaoSetupService {
     }
 
     public void shutDown() {
+        shutdownInProgress = true;
         exportJsonFilesService.shutDown();
         daoStateSnapshotService.shutDown();
     }
@@ -167,7 +169,7 @@ public abstract class BsqNode implements DaoSetupService {
 
     @SuppressWarnings("WeakerAccess")
     protected void onInitialized() {
-        daoStateSnapshotService.applySnapshot(false);
+        daoStateSnapshotService.applyPersistedSnapshot();
 
         if (p2PService.isBootstrapped()) {
             log.info("onAllServicesInitialized: isBootstrapped");
@@ -193,13 +195,11 @@ public abstract class BsqNode implements DaoSetupService {
         maybeExportToJson();
     }
 
-    @SuppressWarnings("WeakerAccess")
-    protected void startReOrgFromLastSnapshot() {
-        daoStateSnapshotService.applySnapshot(true);
-    }
-
-
     protected Optional<Block> doParseBlock(RawBlock rawBlock) throws RequiredReorgFromSnapshotException {
+        if (shutdownInProgress) {
+            return Optional.empty();
+        }
+
         // We check if we have a block with that height. If so we return. We do not use the chainHeight as with genesis
         // height we have no block but chainHeight is initially set to genesis height (bad design ;-( but a bit tricky
         // to change now as it used in many areas.)
@@ -267,7 +267,7 @@ public abstract class BsqNode implements DaoSetupService {
                     lastBlock.isPresent() ? lastBlock.get().getHash() : "lastBlock not present");
 
             pendingBlocks.clear();
-            startReOrgFromLastSnapshot();
+            daoStateSnapshotService.revertToLastSnapshot();
             startParseBlocks();
             throw new RequiredReorgFromSnapshotException(rawBlock);
         }

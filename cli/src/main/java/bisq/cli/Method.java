@@ -47,6 +47,7 @@ public enum Method {
     gettrades,
     failtrade,
     unfailtrade,
+    gettransactions,
     gettransaction,
     gettxfeerate,
     getunusedbsqaddress,
@@ -63,5 +64,7 @@ public enum Method {
     unlockwallet,
     unsettxfeerate,
     withdrawfunds,
-    stop
+    stop,
+    getdaostatus,
+    confirmpaymentstartedxmr
 }

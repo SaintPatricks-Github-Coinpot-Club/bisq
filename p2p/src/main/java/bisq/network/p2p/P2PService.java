@@ -310,7 +310,7 @@ public class P2PService implements SetupListener, MessageListener, ConnectionLis
 
     @Override
     public void onUpdatedDataReceived() {
-        applyIsBootstrapped(P2PServiceListener::onUpdatedDataReceived);
+        p2pServiceListeners.forEach(P2PServiceListener::onUpdatedDataReceived);
     }
 
     @Override
@@ -325,7 +325,8 @@ public class P2PService implements SetupListener, MessageListener, ConnectionLis
 
     @Override
     public void onDataReceived() {
-        p2pServiceListeners.forEach(P2PServiceListener::onDataReceived);
+        applyIsBootstrapped(P2PServiceListener::onDataReceived);
+
     }
 
     private void applyIsBootstrapped(Consumer<P2PServiceListener> listenerHandler) {
@@ -362,10 +363,6 @@ public class P2PService implements SetupListener, MessageListener, ConnectionLis
         numConnectedPeers.set(networkNode.getAllConnections().size());
         //TODO check if still needed and why
         UserThread.runAfter(() -> numConnectedPeers.set(networkNode.getAllConnections().size()), 3);
-    }
-
-    @Override
-    public void onError(Throwable throwable) {
     }
 
 

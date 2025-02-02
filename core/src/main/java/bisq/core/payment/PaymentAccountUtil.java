@@ -214,6 +214,10 @@ public class PaymentAccountUtil {
                 return TransferwiseUsdAccount.SUPPORTED_CURRENCIES;
             case VERSE_ID:
                 return VerseAccount.SUPPORTED_CURRENCIES;
+            case MERCADO_PAGO_ID:
+                return MercadoPagoAccount.SUPPORTED_CURRENCIES();
+            case SBP_ID:
+                return SbpAccount.SUPPORTED_CURRENCIES;
             default:
                 return Collections.emptyList();
         }
@@ -246,6 +250,9 @@ public class PaymentAccountUtil {
         // That is optional and set to null if not supported (AltCoins,...)
         if (paymentAccount instanceof CountryBasedPaymentAccount) {
             Country country = (((CountryBasedPaymentAccount) paymentAccount)).getCountry();
+            return country != null ? country.code : null;
+        } else if (paymentAccount instanceof AmazonGiftCardAccount) {   // GH ISSUE #6661 show Amazon country
+            Country country = ((AmazonGiftCardAccount) paymentAccount).getCountry();
             return country != null ? country.code : null;
         }
         return null;

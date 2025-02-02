@@ -18,18 +18,19 @@
 package bisq.core.filter;
 
 import bisq.core.btc.nodes.BtcNodes;
+import bisq.core.crypto.LowRSigningKey;
 import bisq.core.locale.Res;
 import bisq.core.offer.Offer;
 import bisq.core.payment.payload.PaymentAccountPayload;
 import bisq.core.payment.payload.PaymentMethod;
-import bisq.core.provider.ProvidersRepository;
+import bisq.core.provider.PriceFeedNodeAddressProvider;
 import bisq.core.user.Preferences;
 import bisq.core.user.User;
 
 import bisq.network.p2p.NodeAddress;
 import bisq.network.p2p.P2PService;
 import bisq.network.p2p.P2PServiceListener;
-import bisq.network.p2p.network.NetworkFilter;
+import bisq.network.p2p.network.BanFilter;
 import bisq.network.p2p.storage.HashMapChangedListener;
 import bisq.network.p2p.storage.payload.ProtectedStorageEntry;
 
@@ -60,7 +61,6 @@ import java.math.BigInteger;
 
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -86,6 +86,8 @@ public class FilterManager {
     private static final String BANNED_PRICE_RELAY_NODES = "bannedPriceRelayNodes";
     private static final String BANNED_SEED_NODES = "bannedSeedNodes";
     private static final String BANNED_BTC_NODES = "bannedBtcNodes";
+    private static final String FILTER_PROVIDED_SEED_NODES = "filterProvidedSeedNodes";
+    private static final String FILTER_PROVIDED_BTC_NODES = "filterProvidedBtcNodes";
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Listener
@@ -100,7 +102,7 @@ public class FilterManager {
     private final User user;
     private final Preferences preferences;
     private final ConfigFileEditor configFileEditor;
-    private final ProvidersRepository providersRepository;
+    private final PriceFeedNodeAddressProvider priceFeedNodeAddressProvider;
     private final boolean ignoreDevMsg;
     private final ObjectProperty<Filter> filterProperty = new SimpleObjectProperty<>();
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
@@ -120,25 +122,25 @@ public class FilterManager {
                          User user,
                          Preferences preferences,
                          Config config,
-                         ProvidersRepository providersRepository,
-                         NetworkFilter networkFilter,
+                         PriceFeedNodeAddressProvider priceFeedNodeAddressProvider,
+                         BanFilter banFilter,
                          @Named(Config.IGNORE_DEV_MSG) boolean ignoreDevMsg,
                          @Named(Config.USE_DEV_PRIVILEGE_KEYS) boolean useDevPrivilegeKeys) {
         this.p2PService = p2PService;
         this.keyRing = keyRing;
         this.user = user;
         this.preferences = preferences;
-        this.configFileEditor = new ConfigFileEditor(config.configFile);
-        this.providersRepository = providersRepository;
+        this.configFileEditor = new ConfigFileEditor(config.getConfigFile());
+        this.priceFeedNodeAddressProvider = priceFeedNodeAddressProvider;
         this.ignoreDevMsg = ignoreDevMsg;
 
         publicKeys = useDevPrivilegeKeys ?
-                Collections.singletonList(DevEnv.DEV_PRIVILEGE_PUB_KEY) :
+                DevEnv.getDevPrivilegePubKeys() :
                 List.of("0358d47858acdc41910325fce266571540681ef83a0d6fedce312bef9810793a27",
                         "029340c3e7d4bb0f9e651b5f590b434fecb6175aeaa57145c7804ff05d210e534f",
                         "034dc7530bf66ffd9580aa98031ea9a18ac2d269f7c56c0e71eca06105b9ed69f9");
 
-        networkFilter.setBannedNodePredicate(this::isNodeAddressBannedFromNetwork);
+        banFilter.setBannedNodePredicate(this::isNodeAddressBannedFromNetwork);
     }
 
 
@@ -188,6 +190,12 @@ public class FilterManager {
         p2PService.addP2PServiceListener(new P2PServiceListener() {
             @Override
             public void onDataReceived() {
+                // We should have received all data at that point and if the filters were not set we
+                // clean up the persisted banned nodes in the options file as it might be that we missed the filter
+                // remove message if we have not been online.
+                if (filterProperty.get() == null) {
+                    clearBannedNodes();
+                }
             }
 
             @Override
@@ -200,12 +208,6 @@ public class FilterManager {
 
             @Override
             public void onUpdatedDataReceived() {
-                // We should have received all data at that point and if the filters were not set we
-                // clean up the persisted banned nodes in the options file as it might be that we missed the filter
-                // remove message if we have not been online.
-                if (filterProperty.get() == null) {
-                    clearBannedNodes();
-                }
             }
 
             @Override
@@ -360,7 +362,7 @@ public class FilterManager {
         setFilterSigningKey(privKeyString);
         Filter filterWithSig = user.getDevelopersFilter();
         if (filterWithSig == null) {
-            // Should not happen as UI button is deactivated in that case
+            log.warn("removeDevFilter: filterWithSig == null. Should not happen as UI button is deactivated in that case");
             return;
         }
 
@@ -463,8 +465,25 @@ public class FilterManager {
         return getFilter() != null &&
                 paymentAccountPayload != null &&
                 getFilter().getBannedPaymentAccounts().stream()
-                        .filter(paymentAccountFilter -> paymentAccountFilter.getPaymentMethodId().equals(
-                                paymentAccountPayload.getPaymentMethodId()))
+                        .filter(paymentAccountFilter -> paymentAccountFilter.getPaymentMethodId().equals(paymentAccountPayload.getPaymentMethodId()))
+                        .anyMatch(paymentAccountFilter -> {
+                            try {
+                                Method method = paymentAccountPayload.getClass().getMethod(paymentAccountFilter.getGetMethodName());
+                                // We invoke getter methods (no args), e.g. getHolderName
+                                String valueFromInvoke = (String) method.invoke(paymentAccountPayload);
+                                return valueFromInvoke.equalsIgnoreCase(paymentAccountFilter.getValue());
+                            } catch (Throwable e) {
+                                log.error(e.getMessage());
+                                return false;
+                            }
+                        });
+    }
+
+    public boolean isDelayedPayoutPaymentAccount(PaymentAccountPayload paymentAccountPayload) {
+        return getFilter() != null &&
+                paymentAccountPayload != null &&
+                getFilter().getDelayedPayoutPaymentAccounts().stream()
+                        .filter(paymentAccountFilter -> paymentAccountFilter.getPaymentMethodId().equals(paymentAccountPayload.getPaymentMethodId()))
                         .anyMatch(paymentAccountFilter -> {
                             try {
                                 Method method = paymentAccountPayload.getClass().getMethod(paymentAccountFilter.getGetMethodName());
@@ -507,67 +526,73 @@ public class FilterManager {
     // Private
     ///////////////////////////////////////////////////////////////////////////////////////////
 
-    private void onFilterAddedFromNetwork(Filter newFilter) {
+    private void onFilterAddedFromNetwork(Filter filterFromNetwork) {
         Filter currentFilter = getFilter();
 
-        if (!isFilterPublicKeyInList(newFilter)) {
-            if (newFilter.getSignerPubKeyAsHex() != null && !newFilter.getSignerPubKeyAsHex().isEmpty()) {
-                log.warn("isFilterPublicKeyInList failed. Filter.getSignerPubKeyAsHex={}", newFilter.getSignerPubKeyAsHex());
+        if (!isFilterPublicKeyInList(filterFromNetwork)) {
+            if (filterFromNetwork.getSignerPubKeyAsHex() != null && !filterFromNetwork.getSignerPubKeyAsHex().isEmpty()) {
+                log.warn("isFilterPublicKeyInList failed. filterFromNetwork.getSignerPubKeyAsHex={}", filterFromNetwork.getSignerPubKeyAsHex());
             } else {
-                log.info("isFilterPublicKeyInList failed. Filter.getSignerPubKeyAsHex not set (expected case for pre v1.3.9 filter)");
+                log.info("isFilterPublicKeyInList failed. filterFromNetwork.getSignerPubKeyAsHex not set (expected case for pre v1.3.9 filter)");
             }
             return;
         }
-        if (!isSignatureValid(newFilter)) {
-            log.warn("verifySignature failed. Filter={}", newFilter);
+        if (!isSignatureValid(filterFromNetwork)) {
+            log.warn("verifySignature failed. filterFromNetwork={}", filterFromNetwork);
             return;
         }
 
         if (currentFilter != null) {
-            if (currentFilter.getCreationDate() > newFilter.getCreationDate()) {
+            if (currentFilter.getCreationDate() > filterFromNetwork.getCreationDate()) {
                 log.info("We received a new filter from the network but the creation date is older than the " +
-                        "filter we have already. We ignore the new filter.");
+                                "filter we have already. We ignore the new filter from the network.\n" +
+                                "currentFilter\n{}" +
+                                "filterFromNetwork\n{}",
+                        currentFilter, filterFromNetwork);
 
-                addToInvalidFilters(newFilter);
+                addToInvalidFilters(filterFromNetwork);
+                return;
+            }
+
+            if (isPrivilegedDevPubKeyBanned(filterFromNetwork.getSignerPubKeyAsHex())) {
+                log.warn("Pub key of filter is banned. currentFilter={}, filterFromNetwork={}", currentFilter, filterFromNetwork);
                 return;
             } else {
-                log.info("We received a new filter from the network and the creation date is newer than the " +
-                        "filter we have already. We ignore the old filter.");
+                log.info("We received a new filter with a newer creation date and the signer is not banned. " +
+                        "We ignore the current (older) filter.");
                 addToInvalidFilters(currentFilter);
             }
 
-            if (isPrivilegedDevPubKeyBanned(newFilter.getSignerPubKeyAsHex())) {
-                log.warn("Pub key of filter is banned. currentFilter={}, newFilter={}", currentFilter, newFilter);
-                return;
-            }
         }
 
         // Our new filter is newer so we apply it.
         // We do not require strict guarantees here (e.g. clocks not synced) as only trusted developers have the key
         // for deploying filters and this is only in place to avoid unintended situations of multiple filters
         // from multiple devs or if same dev publishes new filter from different app without the persisted devFilter.
-        filterProperty.set(newFilter);
+        filterProperty.set(filterFromNetwork);
 
         // Seed nodes are requested at startup before we get the filter so we only apply the banned
         // nodes at the next startup and don't update the list in the P2P network domain.
         // We persist it to the property file which is read before any other initialisation.
-        saveBannedNodes(BANNED_SEED_NODES, newFilter.getSeedNodes());
-        saveBannedNodes(BANNED_BTC_NODES, newFilter.getBtcNodes());
+        saveBannedNodes(BANNED_SEED_NODES, filterFromNetwork.getSeedNodes());
+        saveBannedNodes(BANNED_BTC_NODES, filterFromNetwork.getBtcNodes());
+        saveBannedNodes(FILTER_PROVIDED_BTC_NODES, filterFromNetwork.getAddedBtcNodes());
+        saveBannedNodes(FILTER_PROVIDED_SEED_NODES, filterFromNetwork.getAddedSeedNodes());
 
         // Banned price relay nodes we can apply at runtime
-        List<String> priceRelayNodes = newFilter.getPriceRelayNodes();
+        List<String> priceRelayNodes = filterFromNetwork.getPriceRelayNodes();
         saveBannedNodes(BANNED_PRICE_RELAY_NODES, priceRelayNodes);
 
         //TODO should be moved to client with listening on onFilterAdded
-        providersRepository.applyBannedNodes(priceRelayNodes);
+        priceFeedNodeAddressProvider.applyBannedNodes(priceRelayNodes);
 
         //TODO should be moved to client with listening on onFilterAdded
-        if (newFilter.isPreventPublicBtcNetwork() &&
+        if (filterFromNetwork.isPreventPublicBtcNetwork() &&
                 preferences.getBitcoinNodesOptionOrdinal() == BtcNodes.BitcoinNodesOption.PUBLIC.ordinal()) {
             preferences.setBitcoinNodesOptionOrdinal(BtcNodes.BitcoinNodesOption.PROVIDED.ordinal());
         }
 
-        listeners.forEach(e -> e.onFilterAdded(newFilter));
+        listeners.forEach(e -> e.onFilterAdded(filterFromNetwork));
     }
 
     private void onFilterRemovedFromNetwork(Filter filter) {
@@ -597,11 +622,13 @@ public class FilterManager {
     // Clears options files from banned nodes
     private void clearBannedNodes() {
         saveBannedNodes(BANNED_BTC_NODES, null);
+        saveBannedNodes(FILTER_PROVIDED_BTC_NODES, null);
         saveBannedNodes(BANNED_SEED_NODES, null);
+        saveBannedNodes(FILTER_PROVIDED_SEED_NODES, null);
         saveBannedNodes(BANNED_PRICE_RELAY_NODES, null);
 
-        if (providersRepository.getBannedNodes() != null) {
-            providersRepository.applyBannedNodes(null);
+        if (priceFeedNodeAddressProvider.getBannedNodes() != null) {
+            priceFeedNodeAddressProvider.applyBannedNodes(null);
         }
     }
 
@@ -628,7 +655,7 @@ public class FilterManager {
 
     private String getSignature(Filter filterWithoutSig) {
         Sha256Hash hash = getSha256Hash(filterWithoutSig);
-        ECKey.ECDSASignature ecdsaSignature = filterSigningKey.sign(hash);
+        ECKey.ECDSASignature ecdsaSignature = LowRSigningKey.from(filterSigningKey).sign(hash);
         byte[] encodeToDER = ecdsaSignature.encodeToDER();
         return new String(Base64.encode(encodeToDER), StandardCharsets.UTF_8);
     }
@@ -678,8 +705,7 @@ public class FilterManager {
     }
 
     private Sha256Hash getSha256Hash(Filter filter) {
-        byte[] filterData = filter.toProtoMessage().toByteArray();
-        return Sha256Hash.of(filterData);
+        return Sha256Hash.of(filter.serializeForHash());
     }
 
     private String getPubKeyAsHex(ECKey ecKey) {

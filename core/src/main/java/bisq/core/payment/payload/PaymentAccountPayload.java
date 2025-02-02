@@ -17,11 +17,15 @@
 
 package bisq.core.payment.payload;
 
+import bisq.core.locale.Res;
+
 import bisq.common.consensus.UsedForTradeContractJson;
 import bisq.common.crypto.CryptoUtils;
 import bisq.common.proto.network.NetworkPayload;
 import bisq.common.util.JsonExclude;
 import bisq.common.util.Utilities;
+
+import com.google.common.base.Strings;
 
 import org.apache.commons.lang3.ArrayUtils;
 
@@ -127,6 +131,18 @@ public abstract class PaymentAccountPayload implements NetworkPayload, UsedForTr
 
     public void setSalt(byte[] salt) {
         excludeFromJsonDataMap.put(SALT, Utilities.encodeToHex(salt));
+    }
+
+    public String getHolderName() {
+        return excludeFromJsonDataMap.getOrDefault(HOLDER_NAME, "");
+    }
+
+    public String getHolderNameOrPromptIfEmpty() {
+        return getHolderName().isEmpty() ? Res.get("payment.account.owner.ask") : getHolderName();
+    }
+    public void setHolderName(String holderName) {
+        // an empty string must result in the mapping removing the entry.
+        excludeFromJsonDataMap.compute(HOLDER_NAME, (k, v) -> Strings.emptyToNull(holderName));
     }
 
     // Identifying data of payment account (e.g. IBAN).

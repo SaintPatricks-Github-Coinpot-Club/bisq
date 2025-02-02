@@ -78,6 +78,9 @@ public class BisqHeadlessApp implements HeadlessApp {
         bisqSetup.setDisplayTorNetworkSettingsHandler(show -> log.info("onDisplayTorNetworkSettingsHandler: show={}", show));
         bisqSetup.setSpvFileCorruptedHandler(msg -> log.error("onSpvFileCorruptedHandler: msg={}", msg));
         bisqSetup.setChainFileLockedExceptionHandler(msg -> log.error("onChainFileLockedExceptionHandler: msg={}", msg));
+        bisqSetup.setDiskSpaceWarningHandler(msg -> log.error("onDiskSpaceWarningHandler: msg={}", msg));
+        bisqSetup.setOfferDisabledHandler(msg -> log.error("onOfferDisabledHandler: msg={}", msg));
+        bisqSetup.setChainNotSyncedHandler(msg -> log.error("onChainNotSyncedHandler: msg={}", msg));
         bisqSetup.setLockedUpFundsHandler(msg -> log.info("onLockedUpFundsHandler: msg={}", msg));
         bisqSetup.setShowFirstPopupIfResyncSPVRequestedHandler(() -> log.info("onShowFirstPopupIfResyncSPVRequestedHandler"));
         bisqSetup.setRequestWalletPasswordHandler(aesKeyHandler -> log.info("onRequestWalletPasswordHandler"));
@@ -96,8 +99,8 @@ public class BisqHeadlessApp implements HeadlessApp {
         bisqSetup.setQubesOSInfoHandler(() -> log.info("setQubesOSInfoHandler"));
         bisqSetup.setDownGradePreventionHandler(lastVersion -> log.info("Downgrade from version {} to version {} is not supported",
                 lastVersion, Version.VERSION));
-        bisqSetup.setDaoRequiresRestartHandler(() -> {
-            log.info("There was a problem with synchronizing the DAO state. " +
+        bisqSetup.setResyncDaoStateFromResourcesHandler(() -> {
+            log.warn("There was a problem with synchronizing the DAO state. " +
                     "A restart of the application is required to fix the issue.");
             gracefulShutDownHandler.gracefulShutDown(() -> {
             });

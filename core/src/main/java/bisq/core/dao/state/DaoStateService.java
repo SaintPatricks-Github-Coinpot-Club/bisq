@@ -46,9 +46,11 @@ import javax.inject.Inject;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
@@ -75,6 +77,7 @@ public class DaoStateService implements DaoSetupService {
     @Getter
     private boolean parseBlockChainComplete;
     private boolean allowDaoStateChange;
+    private final Map<String, Set<String>> cachedTxIdSetByAddress = new HashMap<>();
 
 
     ///////////////////////////////////////////////////////////////////////////////////////////
@@ -201,6 +204,32 @@ public class DaoStateService implements DaoSetupService {
         return getCycle(blockHeight).map(cycle -> cycle.getHeightOfFirstBlock());
     }
 
+    public Optional<Cycle> getNextCycle(Cycle cycle) {
+        return getCycle(cycle.getHeightOfLastBlock() + 1);
+    }
+
+    public Optional<Cycle> getPreviousCycle(Cycle cycle) {
+        return getCycle(cycle.getHeightOfFirstBlock() - 1);
+    }
+
+    public Optional<Cycle> getPastCycle(Cycle cycle, int numPastCycles) {
+        Optional<Cycle> previous = Optional.empty();
+        Cycle current = cycle;
+        for (int i = 0; i < numPastCycles; i++) {
+            previous = getPreviousCycle(current);
+            if (previous.isPresent()) {
+                current = previous.get();
+            } else {
+                break;
+            }
+        }
+        return previous;
+    }
+
+    public Cycle getCycleAtIndex(int index) {
+        return getCycles().get(index);
+    }
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Block
@@ -273,6 +302,10 @@ public class DaoStateService implements DaoSetupService {
         // generate a hash of the state.
         allowDaoStateChange = false;
         daoStateListeners.forEach(l -> l.onDaoStateChanged(block));
+
+        if (!block.getTxs().isEmpty()) {
+            cachedTxIdSetByAddress.clear();
+        }
     }
 
     // Called after parsing of all pending blocks is completed
@@ -327,14 +360,17 @@ public class DaoStateService implements DaoSetupService {
     }
 
     public List<Block> getBlocksFromBlockHeight(int fromBlockHeight, int numMaxBlocks) {
+        return getBlocksFromBlockHeightStream(fromBlockHeight, numMaxBlocks)
+                .collect(Collectors.toCollection(LinkedList::new));
+    }
+
+    public Stream<Block> getBlocksFromBlockHeightStream(int fromBlockHeight, int numMaxBlocks) {
         // We limit requests to numMaxBlocks blocks, to avoid performance issues and too
         // large network data in case a node requests too far back in history.
         return getBlocks().stream()
                 .filter(block -> block.getHeight() >= fromBlockHeight)
-                .limit(numMaxBlocks)
-                .collect(Collectors.toList());
+                .limit(numMaxBlocks);
     }
-
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Genesis
@@ -440,7 +476,7 @@ public class DaoStateService implements DaoSetupService {
     // TxOutput
     ///////////////////////////////////////////////////////////////////////////////////////////
 
-    private Stream<TxOutput> getUnorderedTxOutputStream() {
+    public Stream<TxOutput> getUnorderedTxOutputStream() {
         return getUnorderedTxStream()
                 .flatMap(tx -> tx.getTxOutputs().stream());
     }
@@ -462,6 +498,10 @@ public class DaoStateService implements DaoSetupService {
 
     public TreeMap<TxOutputKey, TxOutput> getUnspentTxOutputMap() {
         return daoState.getUnspentTxOutputMap();
+    }
+
+    public TreeMap<TxOutputKey, SpentInfo> getSpentInfoMap() {
+        return daoState.getSpentInfoMap();
     }
 
     public void addUnspentTxOutput(TxOutput txOutput) {
@@ -997,6 +1037,54 @@ public class DaoStateService implements DaoSetupService {
         return Optional.ofNullable(daoState.getSpentInfoMap().getOrDefault(txOutput.getKey(), null));
     }
 
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    // Addresses
+    ///////////////////////////////////////////////////////////////////////////////////////////
+
+    public Map<String, Set<String>> getTxIdSetByAddress() {
+        // We clear it at each new (non-empty) block, so it gets recreated
+        if (!cachedTxIdSetByAddress.isEmpty()) {
+            return cachedTxIdSetByAddress;
+        }
+
+        Map<TxOutputKey, String> txIdByConnectedTxOutputKey = new HashMap<>();
+        // Add tx ids and addresses from tx outputs
+        getUnorderedTxStream()
+                .forEach(tx -> {
+                    tx.getTxOutputs().stream()
+                            .filter(this::isBsqTxOutputType)
+                            .filter(txOutput -> txOutput.getAddress() != null)
+                            .filter(txOutput -> !txOutput.getAddress().isEmpty())
+                            .forEach(txOutput -> {
+                                String address = txOutput.getAddress();
+                                Set<String> txIdSet = cachedTxIdSetByAddress.getOrDefault(address, new HashSet<>());
+                                String txId = tx.getId();
+                                txIdSet.add(txId);
+                                cachedTxIdSetByAddress.put(address, txIdSet);
+                                tx.getTxInputs().forEach(txInput -> {
+                                    txIdByConnectedTxOutputKey.put(txInput.getConnectedTxOutputKey(), txId);
+                                });
+                            });
+                });
+
+        // Add tx ids and addresses from connected outputs (inputs)
+        getUnorderedTxOutputStream()
+                .filter(this::isBsqTxOutputType)
+                .filter(txOutput -> txOutput.getAddress() != null)
+                .filter(txOutput -> !txOutput.getAddress().isEmpty())
+                .forEach(txOutput -> {
+                    String txId = txIdByConnectedTxOutputKey.get(txOutput.getKey());
+                    if (txId != null) {
+                        String address = txOutput.getAddress();
+                        Set<String> txIdSet = cachedTxIdSetByAddress.getOrDefault(address, new HashSet<>());
+                        txIdSet.add(txId);
+                        cachedTxIdSetByAddress.put(address, txIdSet);
+                    }
+                });
+
+        return cachedTxIdSetByAddress;
+    }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Vote result data

@@ -19,6 +19,7 @@ package bisq.core.account.sign;
 
 
 import bisq.core.account.witness.AccountAgeWitness;
+import bisq.core.crypto.LowRSigningKey;
 import bisq.core.filter.FilterManager;
 import bisq.core.support.dispute.arbitration.arbitrator.ArbitratorManager;
 
@@ -43,13 +44,13 @@ import java.time.temporal.ChronoUnit;
 
 import java.util.Date;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import static bisq.core.account.sign.SignedWitness.VerificationMethod.ARBITRATOR;
 import static bisq.core.account.sign.SignedWitness.VerificationMethod.TRADE;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 public class SignedWitnessServiceTest {
@@ -86,7 +87,7 @@ public class SignedWitnessServiceTest {
     KeyPair peer2KeyPair;
     KeyPair peer3KeyPair;
 
-    @Before
+    @BeforeEach
     public void setup() throws Exception {
         AppendOnlyDataStoreService appendOnlyDataStoreService = mock(AppendOnlyDataStoreService.class);
         ArbitratorManager arbitratorManager = mock(ArbitratorManager.class);
@@ -104,7 +105,7 @@ public class SignedWitnessServiceTest {
         aew1 = new AccountAgeWitness(account1DataHash, account1CreationTime);
         aew2 = new AccountAgeWitness(account2DataHash, account2CreationTime);
         aew3 = new AccountAgeWitness(account3DataHash, account3CreationTime);
-        arbitrator1Key = new ECKey();
+        arbitrator1Key = LowRSigningKey.from(new ECKey());
         peer1KeyPair = Sig.generateKeyPair();
         peer2KeyPair = Sig.generateKeyPair();
         peer3KeyPair = Sig.generateKeyPair();
@@ -320,7 +321,7 @@ public class SignedWitnessServiceTest {
             byte[] signerPubKey;
             if (i == 0) {
                 // use arbitrator key
-                ECKey arbitratorKey = new ECKey();
+                ECKey arbitratorKey = LowRSigningKey.from(new ECKey());
                 signedKeyPair = Sig.generateKeyPair();
                 String signature1String = arbitratorKey.signMessage(accountDataHashAsHexString);
                 signature = signature1String.getBytes(Charsets.UTF_8);

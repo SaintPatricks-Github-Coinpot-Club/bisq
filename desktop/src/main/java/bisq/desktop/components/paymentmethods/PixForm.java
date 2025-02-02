@@ -35,6 +35,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 
 import static bisq.desktop.util.FormBuilder.addCompactTopLabelTextField;
+import static bisq.desktop.util.FormBuilder.addCompactTopLabelTextFieldWithCopyIcon;
 import static bisq.desktop.util.FormBuilder.addTopLabelTextField;
 import static bisq.desktop.util.FormBuilder.addTopLabelTextFieldWithCopyIcon;
 
@@ -45,6 +46,8 @@ public class PixForm extends PaymentMethodForm {
                                       PaymentAccountPayload paymentAccountPayload) {
         addTopLabelTextFieldWithCopyIcon(gridPane, gridRow, 1, Res.get("payment.pix.key"),
                 ((PixAccountPayload) paymentAccountPayload).getPixKey(), Layout.COMPACT_FIRST_ROW_AND_GROUP_DISTANCE);
+        addCompactTopLabelTextFieldWithCopyIcon(gridPane, ++gridRow, Res.get("payment.account.owner.fullname"),
+                paymentAccountPayload.getHolderNameOrPromptIfEmpty());
         return gridRow;
     }
 
@@ -70,6 +73,14 @@ public class PixForm extends PaymentMethodForm {
             updateFromInputs();
         });
 
+        InputTextField holderNameInputTextField = FormBuilder.addInputTextField(gridPane, ++gridRow,
+                Res.get("payment.account.owner.fullname"));
+        holderNameInputTextField.setValidator(inputValidator);
+        holderNameInputTextField.textProperty().addListener((ov, oldValue, newValue) -> {
+            account.setHolderName(newValue);
+            updateFromInputs();
+        });
+
         addTopLabelTextField(gridPane, ++gridRow, Res.get("shared.currency"), account.getSingleTradeCurrency().getNameAndCode());
         addTopLabelTextField(gridPane, ++gridRow, Res.get("shared.country"), account.getCountry().name);
         addLimitations(false);
@@ -90,6 +101,8 @@ public class PixForm extends PaymentMethodForm {
         TextField field = addCompactTopLabelTextField(gridPane, ++gridRow, Res.get("payment.pix.key"),
                 account.getPixKey()).second;
         field.setMouseTransparent(false);
+        addCompactTopLabelTextField(gridPane, ++gridRow, Res.get("payment.account.owner.fullname"),
+                account.getHolderName());
         addCompactTopLabelTextField(gridPane, ++gridRow, Res.get("shared.currency"), account.getSingleTradeCurrency().getNameAndCode());
         addCompactTopLabelTextField(gridPane, ++gridRow, Res.get("shared.country"), account.getCountry().name);
         addLimitations(true);
@@ -98,6 +111,7 @@ public class PixForm extends PaymentMethodForm {
     @Override
     public void updateAllInputsValid() {
         allInputsValid.set(isAccountNameValid()
+                && inputValidator.validate(account.getHolderName()).isValid
                 && inputValidator.validate(account.getPixKey()).isValid);
     }
 }

@@ -441,6 +441,11 @@ public abstract class Trade extends TradeModel {
     @Getter
     transient final private IntegerProperty assetTxProofResultUpdateProperty = new SimpleIntegerProperty();
 
+    // Added in v.1.9.13
+    @Getter
+    @Setter
+    private long sellerConfirmedPaymentReceiptDate;
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Constructor, initialization
@@ -527,7 +532,8 @@ public abstract class Trade extends TradeModel {
                         .map(msg -> msg.toProtoNetworkEnvelope().getChatMessage())
                         .collect(Collectors.toList()))
                 .setLockTime(lockTime)
-                .setUid(uid);
+                .setUid(uid)
+                .setSellerConfirmedPaymentReceiptDate(sellerConfirmedPaymentReceiptDate);
 
         Optional.ofNullable(takerFeeTxId).ifPresent(builder::setTakerFeeTxId);
         Optional.ofNullable(depositTxId).ifPresent(builder::setDepositTxId);
@@ -596,6 +602,8 @@ public abstract class Trade extends TradeModel {
         trade.chatMessages.addAll(proto.getChatMessageList().stream()
                 .map(ChatMessage::fromPayloadProto)
                 .collect(Collectors.toList()));
+
+        trade.setSellerConfirmedPaymentReceiptDate(proto.getSellerConfirmedPaymentReceiptDate());
 
         return trade;
     }
@@ -897,6 +905,10 @@ public abstract class Trade extends TradeModel {
         return new Date(getTradeStartTime() + getMaxTradePeriod());
     }
 
+    public long getTradeAge() {
+        return System.currentTimeMillis() - getTradeStartTime();
+    }
+
     private long getMaxTradePeriod() {
         return offer.getPaymentMethod().getMaxTradePeriod();
     }
@@ -905,7 +917,7 @@ public abstract class Trade extends TradeModel {
         long now = System.currentTimeMillis();
         long startTime;
         Transaction depositTx = getDepositTx();
-        if (depositTx != null && getDate() != null) {
+        if (depositTx != null) {
             if (depositTx.getConfidence().getDepthInBlocks() > 0) {
                 final long tradeTime = getDate().getTime();
                 // Use tx.getIncludedInBestChainAt() when available, otherwise use tx.getUpdateTime()
@@ -1065,6 +1077,12 @@ public abstract class Trade extends TradeModel {
 
     public boolean isBsqSwap() {
         return offer != null && offer.isBsqSwapOffer();
+    }
+
+    // By checking if burningManSelectionHeight is 0 we can detect if the trade was created with
+    // the new burningmen receivers or with legacy BM.
+    public boolean isUsingLegacyBurningMan() {
+        return processModel.getBurningManSelectionHeight() == 0;
     }
 
 

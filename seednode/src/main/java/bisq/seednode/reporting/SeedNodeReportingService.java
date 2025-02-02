@@ -24,6 +24,12 @@ import bisq.core.dao.monitoring.ProposalStateMonitoringService;
 import bisq.core.dao.monitoring.model.BlindVoteStateBlock;
 import bisq.core.dao.monitoring.model.DaoStateBlock;
 import bisq.core.dao.monitoring.model.ProposalStateBlock;
+import bisq.core.dao.monitoring.network.StateNetworkService;
+import bisq.core.dao.monitoring.network.messages.GetBlindVoteStateHashesRequest;
+import bisq.core.dao.monitoring.network.messages.GetDaoStateHashesRequest;
+import bisq.core.dao.monitoring.network.messages.GetProposalStateHashesRequest;
+import bisq.core.dao.node.full.network.FullNodeNetworkService;
+import bisq.core.dao.node.messages.GetBlocksRequest;
 import bisq.core.dao.state.DaoStateListener;
 import bisq.core.dao.state.DaoStateService;
 
@@ -31,6 +37,9 @@ import bisq.network.p2p.P2PService;
 import bisq.network.p2p.network.NetworkNode;
 import bisq.network.p2p.network.Statistic;
 import bisq.network.p2p.peers.PeerManager;
+import bisq.network.p2p.peers.getdata.RequestDataManager;
+import bisq.network.p2p.peers.getdata.messages.GetUpdatedDataRequest;
+import bisq.network.p2p.peers.getdata.messages.PreliminaryGetDataRequest;
 import bisq.network.p2p.storage.P2PDataStorage;
 import bisq.network.p2p.storage.payload.ProtectedStorageEntry;
 
@@ -54,6 +63,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -77,6 +87,7 @@ public class SeedNodeReportingService {
     private final static long HEART_BEAT_DELAY_SEC = TimeUnit.MINUTES.toSeconds(1);
 
     private final P2PService p2PService;
+    private final DaoFacade daoFacade;
     private final NetworkNode networkNode;
     private final PeerManager peerManager;
     private final P2PDataStorage p2PDataStorage;
@@ -84,13 +95,14 @@ public class SeedNodeReportingService {
     private final DaoStateMonitoringService daoStateMonitoringService;
     private final ProposalStateMonitoringService proposalStateMonitoringService;
     private final BlindVoteStateMonitoringService blindVoteStateMonitoringService;
+    private final RequestDataManager requestDataManager;
+    private final FullNodeNetworkService fullNodeNetworkService;
     private final int maxConnections;
     private final String seedNodeReportingServerUrl;
     private final DaoStateListener daoStateListener;
     private final HttpClient httpClient;
     private final ExecutorService executor;
-    private final Timer heartBeatTimer;
-    private Timer dataReportTimer;
+    private Timer heartBeatTimer, dataReportTimer;
 
     @Inject
     public SeedNodeReportingService(P2PService p2PService,
@@ -102,9 +114,12 @@ public class SeedNodeReportingService {
                                     DaoStateMonitoringService daoStateMonitoringService,
                                     ProposalStateMonitoringService proposalStateMonitoringService,
                                     BlindVoteStateMonitoringService blindVoteStateMonitoringService,
+                                    RequestDataManager requestDataManager,
+                                    FullNodeNetworkService fullNodeNetworkService,
                                     @Named(Config.MAX_CONNECTIONS) int maxConnections,
                                     @Named(Config.SEED_NODE_REPORTING_SERVER_URL) String seedNodeReportingServerUrl) {
         this.p2PService = p2PService;
+        this.daoFacade = daoFacade;
         this.networkNode = networkNode;
         this.peerManager = peerManager;
         this.p2PDataStorage = p2PDataStorage;
@@ -112,16 +127,15 @@ public class SeedNodeReportingService {
         this.daoStateMonitoringService = daoStateMonitoringService;
         this.proposalStateMonitoringService = proposalStateMonitoringService;
         this.blindVoteStateMonitoringService = blindVoteStateMonitoringService;
+        this.requestDataManager = requestDataManager;
+        this.fullNodeNetworkService = fullNodeNetworkService;
         this.maxConnections = maxConnections;
         this.seedNodeReportingServerUrl = seedNodeReportingServerUrl;
 
-        executor = Utilities.newCachedThreadPool(5,
-                8,
-                TimeUnit.MINUTES,
-                (runnable, executor) -> log.error("Execution was rejected. We skip the {} task.", runnable.toString()));
+        // The pool size must be larger as the expected parallel sends because HttpClient use it
+        // internally for asynchronous and dependent tasks.
+        executor = Utilities.getThreadPoolExecutor("SeedNodeReportingService", 20, 40, 100, 8 * 60);
         httpClient = HttpClient.newBuilder().executor(executor).build();
-
-        heartBeatTimer = UserThread.runPeriodically(this::sendHeartBeat, HEART_BEAT_DELAY_SEC);
 
         daoStateListener = new DaoStateListener() {
             @Override
@@ -141,7 +155,112 @@ public class SeedNodeReportingService {
                 });
             }
         };
+    }
+
+    public void initialize() {
+        heartBeatTimer = UserThread.runPeriodically(this::sendHeartBeat, HEART_BEAT_DELAY_SEC);
+
         daoFacade.addBsqStateListener(daoStateListener);
+
+        p2PService.getNetworkNode().addMessageListener((networkEnvelope, connection) -> {
+            if (networkEnvelope instanceof PreliminaryGetDataRequest ||
+                    networkEnvelope instanceof GetUpdatedDataRequest ||
+                    networkEnvelope instanceof GetBlocksRequest ||
+                    networkEnvelope instanceof GetDaoStateHashesRequest ||
+                    networkEnvelope instanceof GetProposalStateHashesRequest ||
+                    networkEnvelope instanceof GetBlindVoteStateHashesRequest) {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                int serializedSize = networkEnvelope.toProtoNetworkEnvelope().getSerializedSize();
+                String simpleName = networkEnvelope.getClass().getSimpleName();
+                try {
+                    LongValueReportingItem reportingItem = LongValueReportingItem.valueOf(simpleName);
+                    reportingItems.add(reportingItem.withValue(serializedSize));
+                    sendReportingItems(reportingItems);
+                } catch (Throwable t) {
+                    log.warn("Could not find enum for {}. Error={}", simpleName, t);
+                }
+            }
+        });
+
+        requestDataManager.addResponseListener(new RequestDataManager.ResponseListener() {
+            @Override
+            public void onSuccess(int serializedSize) {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetDataResponse.withValue(serializedSize));
+                sendReportingItems(reportingItems);
+            }
+
+            @Override
+            public void onFault() {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetDataResponse.withValue(-1));
+                sendReportingItems(reportingItems);
+            }
+        });
+
+        fullNodeNetworkService.addResponseListener(new FullNodeNetworkService.ResponseListener() {
+            @Override
+            public void onSuccess(int serializedSize) {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetBlocksResponse.withValue(serializedSize));
+                sendReportingItems(reportingItems);
+            }
+
+            @Override
+            public void onFault() {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetBlocksResponse.withValue(-1));
+                sendReportingItems(reportingItems);
+            }
+        });
+
+        daoStateMonitoringService.addResponseListener(new StateNetworkService.ResponseListener() {
+            @Override
+            public void onSuccess(int serializedSize) {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetDaoStateHashesResponse.withValue(serializedSize));
+                sendReportingItems(reportingItems);
+            }
+
+            @Override
+            public void onFault() {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetDaoStateHashesResponse.withValue(-1));
+                sendReportingItems(reportingItems);
+            }
+        });
+
+        proposalStateMonitoringService.addResponseListener(new StateNetworkService.ResponseListener() {
+            @Override
+            public void onSuccess(int serializedSize) {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetProposalStateHashesResponse.withValue(serializedSize));
+                sendReportingItems(reportingItems);
+            }
+
+            @Override
+            public void onFault() {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetProposalStateHashesResponse.withValue(-1));
+                sendReportingItems(reportingItems);
+            }
+        });
+
+        blindVoteStateMonitoringService.addResponseListener(new StateNetworkService.ResponseListener() {
+            @Override
+            public void onSuccess(int serializedSize) {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetBlindVoteStateHashesResponse.withValue(serializedSize));
+                sendReportingItems(reportingItems);
+            }
+
+            @Override
+            public void onFault() {
+                ReportingItems reportingItems = new ReportingItems(getMyAddress());
+                reportingItems.add(LongValueReportingItem.GetBlindVoteStateHashesResponse.withValue(-1));
+                sendReportingItems(reportingItems);
+            }
+        });
     }
 
     public void shutDown() {
@@ -152,7 +271,7 @@ public class SeedNodeReportingService {
             dataReportTimer.stop();
         }
 
-        Utilities.shutdownAndAwaitTermination(executor, 2, TimeUnit.SECONDS);
+        Utilities.shutdownAndAwaitTermination(executor, 4, TimeUnit.SECONDS);
     }
 
     private void sendHeartBeat() {
@@ -213,7 +332,7 @@ public class SeedNodeReportingService {
                     numItemsByType.putIfAbsent(className, 0);
                     numItemsByType.put(className, numItemsByType.get(className) + 1);
                 });
-        numItemsByType.forEach((key, value) -> reportingItems.add(LongValueReportingItem.from(key, value)));
+        numItemsByType.forEach((key, value) -> LongValueReportingItem.from(key, value).ifPresent(reportingItems::add));
 
         // Network
         reportingItems.add(LongValueReportingItem.numConnections.withValue(networkNode.getAllConnections().size()));
@@ -233,34 +352,35 @@ public class SeedNodeReportingService {
         reportingItems.add(LongValueReportingItem.maxConnections.withValue(maxConnections));
         reportingItems.add(StringValueReportingItem.version.withValue(Version.VERSION));
 
-        // If no commit hash is found we use 0 in hex format
-        String commitHash = Version.findCommitHash().orElse("00");
-        reportingItems.add(StringValueReportingItem.commitHash.withValue(commitHash));
+        Version.findCommitHash().ifPresent(commitHash -> reportingItems.add(StringValueReportingItem.commitHash.withValue(commitHash)));
 
         sendReportingItems(reportingItems);
     }
 
     private void sendReportingItems(ReportingItems reportingItems) {
+        String truncated = Utilities.toTruncatedString(reportingItems.toString());
         try {
-            log.info("Send report to monitor server: {}", reportingItems.toString());
+            log.info("Going to send report to monitor server: {}", truncated);
             // We send the data as hex encoded protobuf data. We do not use the envelope as it is not part of the p2p system.
             byte[] protoMessageAsBytes = reportingItems.toProtoMessageAsBytes();
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(seedNodeReportingServerUrl))
                     .POST(HttpRequest.BodyPublishers.ofByteArray(protoMessageAsBytes))
                     .header("User-Agent", getMyAddress())
-                    .header("Connection", "keep-alive")
                     .build();
             httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete((response, throwable) -> {
                 if (throwable != null) {
                     log.warn("Exception at sending reporting data. {}", throwable.getMessage());
-                } else if (response.statusCode() != 200) {
-                    log.error("Response error message: {}", response);
+                } else if (response.statusCode() == 200) {
+                    log.info("Sent successfully report to monitor server with {} items", reportingItems.size());
+                } else {
+                    log.warn("Server responded with error. Response={}", response);
                 }
             });
+        } catch (RejectedExecutionException t) {
+            log.warn("Did not send reportingItems {} because of RejectedExecutionException {}", truncated, t.toString());
         } catch (Throwable t) {
-            // RejectedExecutionException is thrown if we exceed our pool size.
-            log.error("Did not send reportingItems {} because of exception {}", reportingItems, t.toString());
+            log.warn("Did not send reportingItems {} because of exception {}", truncated, t.toString());
         }
     }
 

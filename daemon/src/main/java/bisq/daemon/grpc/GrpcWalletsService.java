@@ -31,8 +31,12 @@ import bisq.proto.grpc.GetFundingAddressesReply;
 import bisq.proto.grpc.GetFundingAddressesRequest;
 import bisq.proto.grpc.GetNetworkReply;
 import bisq.proto.grpc.GetNetworkRequest;
+import bisq.proto.grpc.GetDaoStatusReply;
+import bisq.proto.grpc.GetDaoStatusRequest;
 import bisq.proto.grpc.GetTransactionReply;
 import bisq.proto.grpc.GetTransactionRequest;
+import bisq.proto.grpc.GetTransactionsReply;
+import bisq.proto.grpc.GetTransactionsRequest;
 import bisq.proto.grpc.GetTxFeeRateReply;
 import bisq.proto.grpc.GetTxFeeRateRequest;
 import bisq.proto.grpc.GetUnusedBsqAddressReply;
@@ -68,6 +72,7 @@ import com.google.common.util.concurrent.FutureCallback;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import lombok.extern.slf4j.Slf4j;
@@ -103,6 +108,19 @@ class GrpcWalletsService extends WalletsImplBase {
             var network = coreApi.getNetworkName();
             var reply = GetNetworkReply.newBuilder()
                     .setNetwork(network)
+                    .build();
+            responseObserver.onNext(reply);
+            responseObserver.onCompleted();
+        } catch (Throwable cause) {
+            exceptionHandler.handleException(log, cause, responseObserver);
+        }
+    }
+
+    @Override
+    public void getDaoStatus(GetDaoStatusRequest req, StreamObserver<GetDaoStatusReply> responseObserver) {
+        try {
+            var reply = GetDaoStatusReply.newBuilder()
+                    .setIsDaoStateReadyAndInSync(coreApi.isDaoStateReadyAndInSync())
                     .build();
             responseObserver.onNext(reply);
             responseObserver.onCompleted();
@@ -261,14 +279,12 @@ class GrpcWalletsService extends WalletsImplBase {
     public void getTxFeeRate(GetTxFeeRateRequest req,
                              StreamObserver<GetTxFeeRateReply> responseObserver) {
         try {
-            coreApi.getTxFeeRate(() -> {
-                TxFeeRateInfo txFeeRateInfo = coreApi.getMostRecentTxFeeRateInfo();
-                var reply = GetTxFeeRateReply.newBuilder()
-                        .setTxFeeRateInfo(txFeeRateInfo.toProtoMessage())
-                        .build();
-                responseObserver.onNext(reply);
-                responseObserver.onCompleted();
-            });
+            TxFeeRateInfo txFeeRateInfo = coreApi.getMostRecentTxFeeRateInfo();
+            var reply = GetTxFeeRateReply.newBuilder()
+                    .setTxFeeRateInfo(txFeeRateInfo.toProtoMessage())
+                    .build();
+            responseObserver.onNext(reply);
+            responseObserver.onCompleted();
         } catch (Throwable cause) {
             exceptionHandler.handleException(log, cause, responseObserver);
         }
@@ -278,14 +294,13 @@ class GrpcWalletsService extends WalletsImplBase {
     public void setTxFeeRatePreference(SetTxFeeRatePreferenceRequest req,
                                        StreamObserver<SetTxFeeRatePreferenceReply> responseObserver) {
         try {
-            coreApi.setTxFeeRatePreference(req.getTxFeeRatePreference(), () -> {
-                TxFeeRateInfo txFeeRateInfo = coreApi.getMostRecentTxFeeRateInfo();
-                var reply = SetTxFeeRatePreferenceReply.newBuilder()
-                        .setTxFeeRateInfo(txFeeRateInfo.toProtoMessage())
-                        .build();
-                responseObserver.onNext(reply);
-                responseObserver.onCompleted();
-            });
+            coreApi.setTxFeeRatePreference(req.getTxFeeRatePreference());
+            TxFeeRateInfo txFeeRateInfo = coreApi.getMostRecentTxFeeRateInfo();
+            var reply = SetTxFeeRatePreferenceReply.newBuilder()
+                    .setTxFeeRateInfo(txFeeRateInfo.toProtoMessage())
+                    .build();
+            responseObserver.onNext(reply);
+            responseObserver.onCompleted();
         } catch (Throwable cause) {
             exceptionHandler.handleException(log, cause, responseObserver);
         }
@@ -295,14 +310,31 @@ class GrpcWalletsService extends WalletsImplBase {
     public void unsetTxFeeRatePreference(UnsetTxFeeRatePreferenceRequest req,
                                          StreamObserver<UnsetTxFeeRatePreferenceReply> responseObserver) {
         try {
-            coreApi.unsetTxFeeRatePreference(() -> {
-                TxFeeRateInfo txFeeRateInfo = coreApi.getMostRecentTxFeeRateInfo();
-                var reply = UnsetTxFeeRatePreferenceReply.newBuilder()
-                        .setTxFeeRateInfo(txFeeRateInfo.toProtoMessage())
-                        .build();
-                responseObserver.onNext(reply);
-                responseObserver.onCompleted();
-            });
+            coreApi.unsetTxFeeRatePreference();
+            TxFeeRateInfo txFeeRateInfo = coreApi.getMostRecentTxFeeRateInfo();
+            var reply = UnsetTxFeeRatePreferenceReply.newBuilder()
+                    .setTxFeeRateInfo(txFeeRateInfo.toProtoMessage())
+                    .build();
+            responseObserver.onNext(reply);
+            responseObserver.onCompleted();
+        } catch (Throwable cause) {
+            exceptionHandler.handleException(log, cause, responseObserver);
+        }
+    }
+
+    @Override
+    public void getTransactions(GetTransactionsRequest req,
+                                StreamObserver<GetTransactionsReply> responseObserver) {
+        try {
+            Set<Transaction> transactions = coreApi.getTransactions();
+            log.info("Transactions count: " + transactions.size());
+            var reply = GetTransactionsReply.newBuilder()
+                    .addAllTxInfo(transactions.stream()
+                            .map(tx -> toTxInfo(tx).toProtoMessage())
+                            .collect(Collectors.toList()))
+                    .build();
+            responseObserver.onNext(reply);
+            responseObserver.onCompleted();
         } catch (Throwable cause) {
             exceptionHandler.handleException(log, cause, responseObserver);
         }
@@ -386,6 +418,7 @@ class GrpcWalletsService extends WalletsImplBase {
                 .or(() -> Optional.of(CallRateMeteringInterceptor.valueOf(
                         new HashMap<>() {{
                             put(getGetNetworkMethod().getFullMethodName(), new GrpcCallRateMeter(1, SECONDS));
+                            put(getGetDaoStatusMethod().getFullMethodName(), new GrpcCallRateMeter(1, SECONDS));
                             put(getGetBalancesMethod().getFullMethodName(), new GrpcCallRateMeter(1, SECONDS));
                             put(getGetAddressBalanceMethod().getFullMethodName(), new GrpcCallRateMeter(1, SECONDS));
                             put(getGetFundingAddressesMethod().getFullMethodName(), new GrpcCallRateMeter(1, SECONDS));

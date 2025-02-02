@@ -43,10 +43,13 @@ public final class BtcAddressValidator extends InputValidator {
     }
 
     private ValidationResult validateBtcAddress(String input) {
-        try {
-            Address.fromString(Config.baseCurrencyNetworkParameters(), input);
+        if (allowEmpty && (input == null || input.trim().isEmpty())) {
             return new ValidationResult(true);
-        } catch (AddressFormatException e) {
+        }
+        try {
+            Address.fromString(Config.baseCurrencyNetworkParameters(), input).getOutputScriptType();
+            return new ValidationResult(true);
+        } catch (AddressFormatException | IllegalStateException e) {
             return new ValidationResult(false, Res.get("validation.btc.invalidFormat"));
         }
     }

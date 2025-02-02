@@ -17,6 +17,7 @@
 
 package bisq.core.support.dispute.agent;
 
+import bisq.core.crypto.LowRSigningKey;
 import bisq.core.filter.FilterManager;
 import bisq.core.user.User;
 
@@ -100,7 +101,7 @@ public abstract class DisputeAgentManager<T extends DisputeAgent> {
         this.disputeAgentService = disputeAgentService;
         this.user = user;
         this.filterManager = filterManager;
-        publicKeys = useDevPrivilegeKeys ? Collections.singletonList(DevEnv.DEV_PRIVILEGE_PUB_KEY) : getPubKeyList();
+        publicKeys = useDevPrivilegeKeys ? Collections.singletonList(DevEnv.getDEV_PRIVILEGE_PUB_KEY()) : getPubKeyList();
     }
 
 
@@ -161,7 +162,7 @@ public abstract class DisputeAgentManager<T extends DisputeAgent> {
             else
                 p2PService.addP2PServiceListener(new BootstrapListener() {
                     @Override
-                    public void onUpdatedDataReceived() {
+                    public void onDataReceived() {
                         startRepublishDisputeAgent();
                     }
                 });
@@ -193,7 +194,7 @@ public abstract class DisputeAgentManager<T extends DisputeAgent> {
                     String pubKeyAsHex = Utils.HEX.encode(e.getRegistrationPubKey());
                     boolean isInPublicKeyInList = isPublicKeyInList(pubKeyAsHex);
                     if (!isInPublicKeyInList) {
-                        if (DevEnv.DEV_PRIVILEGE_PUB_KEY.equals(pubKeyAsHex))
+                        if (DevEnv.getDEV_PRIVILEGE_PUB_KEY().equals(pubKeyAsHex))
                             log.info("We got the DEV_PRIVILEGE_PUB_KEY in our list of publicKeys. RegistrationPubKey={}, nodeAddress={}",
                                     Utilities.bytesAsHexString(e.getRegistrationPubKey()),
                                     e.getNodeAddress().getFullAddress());
@@ -257,7 +258,7 @@ public abstract class DisputeAgentManager<T extends DisputeAgent> {
     // Other users will check the signature with the list of public keys hardcoded in the app.
     public String signStorageSignaturePubKey(ECKey key) {
         String keyToSignAsHex = Utils.HEX.encode(keyRing.getPubKeyRing().getSignaturePubKey().getEncoded());
-        return key.signMessage(keyToSignAsHex);
+        return LowRSigningKey.from(key).signMessage(keyToSignAsHex);
     }
 
     @Nullable

@@ -25,6 +25,7 @@ import bisq.core.dao.governance.period.PeriodService;
 import bisq.core.dao.monitoring.model.BlindVoteStateBlock;
 import bisq.core.dao.monitoring.model.BlindVoteStateHash;
 import bisq.core.dao.monitoring.network.BlindVoteStateNetworkService;
+import bisq.core.dao.monitoring.network.StateNetworkService;
 import bisq.core.dao.monitoring.network.messages.GetBlindVoteStateHashesRequest;
 import bisq.core.dao.monitoring.network.messages.NewBlindVoteStateHashMessage;
 import bisq.core.dao.state.DaoStateListener;
@@ -230,6 +231,10 @@ public class BlindVoteStateMonitoringService implements DaoSetupService, DaoStat
         blindVoteStateNetworkService.requestHashes(genesisTxInfo.getGenesisBlockHeight(), peersAddress);
     }
 
+    public void addResponseListener(StateNetworkService.ResponseListener responseListener) {
+        blindVoteStateNetworkService.addResponseListener(responseListener);
+    }
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Listeners
@@ -263,7 +268,7 @@ public class BlindVoteStateMonitoringService implements DaoSetupService, DaoStat
                     .collect(Collectors.toList());
 
             // We use MyBlindVoteList to get the serialized bytes from the blindVotes list
-            byte[] serializedBlindVotes = new MyBlindVoteList(blindVotes).toProtoMessage().toByteArray();
+            byte[] serializedBlindVotes = new MyBlindVoteList(blindVotes).serializeForHash();
 
             byte[] prevHash;
             if (blindVoteStateBlockChain.isEmpty()) {

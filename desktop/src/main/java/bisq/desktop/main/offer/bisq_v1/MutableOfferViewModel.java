@@ -690,6 +690,11 @@ public abstract class MutableOfferViewModel<M extends MutableOfferDataModel> ext
         updateSpinnerInfo();
     }
 
+    void savePreferenceAndFundFromSavingsWallet() {
+        preferences.setUseBisqWalletFunding(true);
+        fundFromSavingsWallet();
+    }
+
     void fundFromSavingsWallet() {
         dataModel.fundFromSavingsWallet();
         if (dataModel.getIsBtcWalletFunded().get()) {
@@ -964,6 +969,27 @@ public abstract class MutableOfferViewModel<M extends MutableOfferDataModel> ext
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Getters
     ///////////////////////////////////////////////////////////////////////////////////////////
+
+    public boolean areAmountsInRange() {
+        // Limit the minimum trade amount when creating an offer to 50% of the max amount.
+        // github.com/bisq-network/projects/issues/67
+        if (dataModel.getMinAmount().get().isLessThan(dataModel.getAmount().get().divide(2))) {
+            displayAmountsOutOfRangePopup();
+            return false;
+        }
+        return true;
+    }
+
+    private void displayAmountsOutOfRangePopup() {
+        Popup popup = new Popup();
+        popup.warning(Res.get("createOffer.amountsOutSideOfDeviation",
+                dataModel.getMinAmount().get().toPlainString(),
+                dataModel.getAmount().get().toPlainString()))
+                .actionButtonText(Res.get("createOffer.changeAmount"))
+                .onAction(popup::hide)
+                .hideCloseButton()
+                .show();
+    }
 
     public boolean isPriceInRange() {
         if (marketPriceMargin.get() != null && !marketPriceMargin.get().isEmpty()) {
@@ -1255,7 +1281,7 @@ public abstract class MutableOfferViewModel<M extends MutableOfferDataModel> ext
             Coin checkAmount = dataModel.getMinAmount().get() == null ? dataModel.getAmount().get() : dataModel.getMinAmount().get();
             if (checkAmount != null && !checkAmount.isGreaterThan(OfferRestrictions.TOLERATED_SMALL_TRADE_AMOUNT)) {
                 makeOfferFromUnsignedAccountWarningDisplayed = true;
-                GUIUtil.showMakeOfferToUnsignedAccountWarning();
+                GUIUtil.showUnsignedAccountWarningForSellerAsMaker();
             }
         }
     }

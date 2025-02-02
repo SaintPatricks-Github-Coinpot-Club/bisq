@@ -42,6 +42,7 @@ import bisq.desktop.components.paymentmethods.HalCashForm;
 import bisq.desktop.components.paymentmethods.ImpsForm;
 import bisq.desktop.components.paymentmethods.InteracETransferForm;
 import bisq.desktop.components.paymentmethods.JapanBankTransferForm;
+import bisq.desktop.components.paymentmethods.MercadoPagoForm;
 import bisq.desktop.components.paymentmethods.MoneseForm;
 import bisq.desktop.components.paymentmethods.MoneyBeamForm;
 import bisq.desktop.components.paymentmethods.MoneyGramForm;
@@ -59,6 +60,7 @@ import bisq.desktop.components.paymentmethods.RevolutForm;
 import bisq.desktop.components.paymentmethods.RtgsForm;
 import bisq.desktop.components.paymentmethods.SameBankForm;
 import bisq.desktop.components.paymentmethods.SatispayForm;
+import bisq.desktop.components.paymentmethods.SbpForm;
 import bisq.desktop.components.paymentmethods.SepaForm;
 import bisq.desktop.components.paymentmethods.SepaInstantForm;
 import bisq.desktop.components.paymentmethods.SpecificBankForm;
@@ -101,6 +103,7 @@ import bisq.core.payment.payload.HalCashAccountPayload;
 import bisq.core.payment.payload.MoneyGramAccountPayload;
 import bisq.core.payment.payload.PaymentAccountPayload;
 import bisq.core.payment.payload.PaymentMethod;
+import bisq.core.payment.payload.SbpAccountPayload;
 import bisq.core.payment.payload.SepaAccountPayload;
 import bisq.core.payment.payload.SepaInstantAccountPayload;
 import bisq.core.payment.payload.SwiftAccountPayload;
@@ -282,10 +285,10 @@ public class BuyerStep2View extends TradeStepView {
                 gridRow = PerfectMoneyForm.addFormForBuyer(gridPane, gridRow, paymentAccountPayload);
                 break;
             case PaymentMethod.SEPA_ID:
-                gridRow = SepaForm.addFormForBuyer(gridPane, gridRow, paymentAccountPayload);
+                gridRow = SepaForm.addFormForBuyer(gridPane, gridRow, paymentAccountPayload, model.getFiatVolume());
                 break;
             case PaymentMethod.SEPA_INSTANT_ID:
-                gridRow = SepaInstantForm.addFormForBuyer(gridPane, gridRow, paymentAccountPayload);
+                gridRow = SepaInstantForm.addFormForBuyer(gridPane, gridRow, paymentAccountPayload, model.getFiatVolume());
                 break;
             case PaymentMethod.FASTER_PAYMENTS_ID:
                 gridRow = FasterPaymentsForm.addFormForBuyer(gridPane, gridRow, paymentAccountPayload);
@@ -425,6 +428,12 @@ public class BuyerStep2View extends TradeStepView {
                 break;
             case PaymentMethod.DOMESTIC_WIRE_TRANSFER_ID:
                 gridRow = DomesticWireTransferForm.addFormForBuyer(gridPane, gridRow, paymentAccountPayload);
+                break;
+            case PaymentMethod.MERCADO_PAGO_ID:
+                gridRow = MercadoPagoForm.addFormForBuyer(gridPane, gridRow, paymentAccountPayload);
+                break;
+            case PaymentMethod.SBP_ID:
+                gridRow = SbpForm.addFormForBuyer(gridPane, gridRow, paymentAccountPayload);
                 break;
             default:
                 log.error("Not supported PaymentMethod: " + paymentMethodId);
@@ -709,6 +718,8 @@ public class BuyerStep2View extends TradeStepView {
                 message += Res.get("portfolio.pending.step2_buyer.pay", amount) +
                         refTextWarn + "\n\n" +
                         Res.get("portfolio.pending.step2_buyer.fees.swift");
+            } else if (paymentAccountPayload instanceof SbpAccountPayload) {
+                message += Res.get("portfolio.pending.step2_buyer.sbp", amount);
             } else {
                 message += Res.get("portfolio.pending.step2_buyer.pay", amount) +
                         refTextWarn + "\n\n" +

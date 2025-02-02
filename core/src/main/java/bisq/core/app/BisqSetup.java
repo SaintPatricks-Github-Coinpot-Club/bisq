@@ -107,6 +107,8 @@ import lombok.extern.slf4j.Slf4j;
 
 import javax.annotation.Nullable;
 
+import static bisq.core.util.FormattingUtils.formatBytes;
+
 @Slf4j
 @Singleton
 public class BisqSetup {
@@ -162,7 +164,7 @@ public class BisqSetup {
             filterWarningHandler, displaySecurityRecommendationHandler, displayLocalhostHandler,
             wrongOSArchitectureHandler, displaySignedByArbitratorHandler,
             displaySignedByPeerHandler, displayPeerLimitLiftedHandler, displayPeerSignerHandler,
-            rejectedTxErrorMessageHandler;
+            rejectedTxErrorMessageHandler, diskSpaceWarningHandler, offerDisabledHandler, chainNotSyncedHandler;
     @Setter
     @Nullable
     private Consumer<Boolean> displayTorNetworkSettingsHandler;
@@ -198,7 +200,7 @@ public class BisqSetup {
     private Runnable qubesOSInfoHandler;
     @Setter
     @Nullable
-    private Runnable daoRequiresRestartHandler;
+    private Runnable resyncDaoStateFromResourcesHandler;
     @Setter
     @Nullable
     private Runnable torAddressUpgradeHandler;
@@ -292,6 +294,11 @@ public class BisqSetup {
         }
     }
 
+    public void displayOfferDisabledMessage(String message) {
+        if (offerDisabledHandler != null) {
+            offerDisabledHandler.accept(message);
+        }
+    }
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Main startup tasks
@@ -334,6 +341,7 @@ public class BisqSetup {
         maybeShowLocalhostRunningInfo();
         maybeShowAccountSigningStateInfo();
         maybeShowTorAddressUpgradeInformation();
+        maybeUpgradeBsqExplorerUrl();
         checkInboundConnections();
     }
 
@@ -372,7 +380,7 @@ public class BisqSetup {
     }
 
     private void readMapsFromResources(Runnable completeHandler) {
-        String postFix = "_" + config.baseCurrencyNetwork.name();
+        String postFix = "_" + config.getBaseCurrencyNetwork().name();
         p2PService.getP2PDataStorage().readFromResources(postFix, completeHandler);
     }
 
@@ -462,8 +470,10 @@ public class BisqSetup {
                 walletPasswordHandler,
                 () -> {
                     if (allBasicServicesInitialized) {
+                        // the following are called each time a block is received
                         checkForLockedUpFunds();
                         checkForInvalidMakerFeeTxs();
+                        checkFreeDiskSpace();
                     }
                 },
                 () -> walletInitialized.set(true));
@@ -477,10 +487,12 @@ public class BisqSetup {
                 daoErrorMessageHandler,
                 daoWarnMessageHandler,
                 filterWarningHandler,
+                chainNotSyncedHandler,
+                offerDisabledHandler,
                 voteResultExceptionHandler,
                 revolutAccountsUpdateHandler,
                 amazonGiftCardAccountsUpdateHandler,
-                daoRequiresRestartHandler);
+                resyncDaoStateFromResourcesHandler);
 
         if (walletsSetup.downloadPercentageProperty().get() == 1) {
             checkForLockedUpFunds();
@@ -545,6 +557,18 @@ public class BisqSetup {
                 }
             }
         });
+    }
+
+    private void checkFreeDiskSpace() {
+        long TWO_GIGABYTES = 2147483648L;
+        long usableSpace = new File(Config.appDataDir(), VERSION_FILE_NAME).getUsableSpace();
+        if (usableSpace < TWO_GIGABYTES) {
+            String message = Res.get("popup.warning.diskSpace", formatBytes(usableSpace), formatBytes(TWO_GIGABYTES));
+            log.warn(message);
+            if (diskSpaceWarningHandler != null) {
+                diskSpaceWarningHandler.accept(message);
+            }
+        }
     }
 
     @Nullable
@@ -760,6 +784,18 @@ public class BisqSetup {
         }
     }
 
+    private void maybeUpgradeBsqExplorerUrl() {
+        // if wiz BSQ explorer selected, replace with 1st explorer in the list of available.
+        if (preferences.getBsqBlockChainExplorer().name.equalsIgnoreCase("mempool.space (@wiz)") &&
+                preferences.getBsqBlockChainExplorers().size() > 0) {
+            preferences.setBsqBlockChainExplorer(preferences.getBsqBlockChainExplorers().get(0));
+        }
+        if (preferences.getBsqBlockChainExplorer().name.equalsIgnoreCase("bisq.mempool.emzy.de (@emzy)") &&
+                preferences.getBsqBlockChainExplorers().size() > 0) {
+            preferences.setBsqBlockChainExplorer(preferences.getBsqBlockChainExplorers().get(0));
+        }
+    }
+
     private void maybeShowTorAddressUpgradeInformation() {
         if (Config.baseCurrencyNetwork().isRegtest() ||
                 Utils.isV3Address(Objects.requireNonNull(p2PService.getNetworkNode().getNodeAddress()).getHostName())) {
@@ -832,8 +868,8 @@ public class BisqSetup {
         return p2PNetworkSetup.getP2PNetworkStatusIconId();
     }
 
-    public BooleanProperty getUpdatedDataReceived() {
-        return p2PNetworkSetup.getUpdatedDataReceived();
+    public BooleanProperty getDataReceived() {
+        return p2PNetworkSetup.getDataReceived();
     }
 
     public StringProperty getP2pNetworkLabelId() {

@@ -26,6 +26,11 @@
     -fx-font-family: "IBM Plex Sans";
 }
 
+/* Avoid color artefacts at antialias */
+.text {
+    -fx-font-smoothing-type: gray;
+}
+
 /********************************************************************************************************************
  *                                                                                                                  *
  * General                                                                                                          *
@@ -830,6 +835,10 @@ tree-table-view:focused {
 
 .alert {
     -fx-text-fill: -bs-rd-error-red;
+}
+
+.icon {
+    -fx-fill: -bs-text-color;
 }
 
 .opaque-icon {

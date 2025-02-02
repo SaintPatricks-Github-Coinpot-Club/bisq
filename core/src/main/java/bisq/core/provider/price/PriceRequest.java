@@ -17,7 +17,6 @@
 
 package bisq.core.provider.price;
 
-import bisq.common.util.Tuple2;
 import bisq.common.util.Utilities;
 
 import com.google.common.util.concurrent.FutureCallback;
@@ -27,7 +26,6 @@ import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
 
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import lombok.extern.slf4j.Slf4j;
@@ -45,27 +43,23 @@ public class PriceRequest {
     public PriceRequest() {
     }
 
-    public SettableFuture<Tuple2<Map<String, Long>, Map<String, MarketPrice>>> requestAllPrices(PriceProvider provider) {
+    public SettableFuture<PricenodeDto> requestAllPrices(PriceProvider provider) {
         this.provider = provider;
         String baseUrl = provider.getBaseUrl();
-        SettableFuture<Tuple2<Map<String, Long>, Map<String, MarketPrice>>> resultFuture = SettableFuture.create();
-        ListenableFuture<Tuple2<Map<String, Long>, Map<String, MarketPrice>>> future = executorService.submit(() -> {
-            Thread.currentThread().setName("PriceRequest @ " + baseUrl);
-            return provider.getAll();
-        });
+        SettableFuture<PricenodeDto> resultFuture = SettableFuture.create();
+        ListenableFuture<PricenodeDto> future = executorService.submit(provider::getAll);
 
         Futures.addCallback(future, new FutureCallback<>() {
-            public void onSuccess(Tuple2<Map<String, Long>, Map<String, MarketPrice>> marketPriceTuple) {
-                log.trace("Received marketPriceTuple of {}\nfrom provider {}", marketPriceTuple, provider);
+            public void onSuccess(PricenodeDto pricenodeDto) {
                 if (!shutDownRequested) {
-                    resultFuture.set(marketPriceTuple);
+                    resultFuture.set(pricenodeDto);
                 }
-
             }
 
             public void onFailure(@NotNull Throwable throwable) {
-                if (!shutDownRequested) {
-                    resultFuture.setException(new PriceRequestException(throwable, baseUrl));
+                if (!shutDownRequested && !resultFuture.setException(new PriceRequestException(throwable, baseUrl))) {
+                    // In case the setException returns false we need to cancel the future.
+                    resultFuture.cancel(true);
                 }
             }
         }, MoreExecutors.directExecutor());
@@ -78,6 +72,6 @@ public class PriceRequest {
         if (provider != null) {
             provider.shutDown();
         }
-        Utilities.shutdownAndAwaitTermination(executorService, 1, TimeUnit.SECONDS);
+        Utilities.shutdownAndAwaitTermination(executorService, 2, TimeUnit.SECONDS);
     }
 }

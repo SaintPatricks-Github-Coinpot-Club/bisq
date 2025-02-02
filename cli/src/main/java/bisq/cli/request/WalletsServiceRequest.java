@@ -23,9 +23,11 @@ import bisq.proto.grpc.BsqBalanceInfo;
 import bisq.proto.grpc.BtcBalanceInfo;
 import bisq.proto.grpc.GetAddressBalanceRequest;
 import bisq.proto.grpc.GetBalancesRequest;
+import bisq.proto.grpc.GetDaoStatusRequest;
 import bisq.proto.grpc.GetFundingAddressesRequest;
 import bisq.proto.grpc.GetNetworkRequest;
 import bisq.proto.grpc.GetTransactionRequest;
+import bisq.proto.grpc.GetTransactionsRequest;
 import bisq.proto.grpc.GetTxFeeRateRequest;
 import bisq.proto.grpc.GetUnusedBsqAddressRequest;
 import bisq.proto.grpc.LockWalletRequest;
@@ -58,6 +60,11 @@ public class WalletsServiceRequest {
     public String getNetwork() {
         var request = GetNetworkRequest.newBuilder().build();
         return grpcStubs.walletsService.getNetwork(request).getNetwork();
+    }
+
+    public boolean getDaoStatus() {
+        var request = GetDaoStatusRequest.newBuilder().build();
+        return grpcStubs.walletsService.getDaoStatus(request).getIsDaoStateReadyAndInSync();
     }
 
     public BalancesInfo getBalances() {
@@ -156,6 +163,12 @@ public class WalletsServiceRequest {
     public TxFeeRateInfo unsetTxFeeRate() {
         var request = UnsetTxFeeRatePreferenceRequest.newBuilder().build();
         return grpcStubs.walletsService.unsetTxFeeRatePreference(request).getTxFeeRateInfo();
+    }
+
+    public List<TxInfo> getTransactions() {
+        var request = GetTransactionsRequest.newBuilder()
+                .build();
+        return grpcStubs.walletsService.getTransactions(request).getTxInfoList();
     }
 
     public TxInfo getTransaction(String txId) {

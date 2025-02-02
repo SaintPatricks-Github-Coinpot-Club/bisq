@@ -36,6 +36,7 @@ import bisq.core.trade.ClosedTradableManager;
 import bisq.core.trade.bisq_v1.TradeUtil;
 import bisq.core.trade.model.bisq_v1.Contract;
 import bisq.core.trade.model.bisq_v1.Trade;
+import bisq.core.user.DontShowAgainLookup;
 import bisq.core.user.User;
 import bisq.core.util.FormattingUtils;
 import bisq.core.util.VolumeUtil;
@@ -58,11 +59,12 @@ import javax.inject.Named;
 import org.fxmisc.easybind.EasyBind;
 import org.fxmisc.easybind.Subscription;
 
-import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.ReadOnlyObjectProperty;
-import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.SimpleObjectProperty;
+
+import java.time.Duration;
+import java.time.Instant;
 
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
@@ -121,8 +123,6 @@ public class PendingTradesViewModel extends ActivatableWithDataModel<PendingTrad
     private final ObjectProperty<MessageState> messageStateProperty = new SimpleObjectProperty<>(MessageState.UNDEFINED);
     private Subscription tradeStateSubscription;
     private Subscription messageStateSubscription;
-    @Getter
-    protected final IntegerProperty mempoolStatus = new SimpleIntegerProperty();
 
 
     ///////////////////////////////////////////////////////////////////////////////////////////
@@ -209,28 +209,56 @@ public class PendingTradesViewModel extends ActivatableWithDataModel<PendingTrad
         messageStateProperty.set(messageState);
     }
 
-    public void checkTakerFeeTx(Trade trade) {
-        mempoolStatus.setValue(-1);
-        mempoolService.validateOfferTakerTx(trade, (txValidator -> {
-            mempoolStatus.setValue(txValidator.isFail() ? 0 : 1);
-            if (txValidator.isFail()) {
-                String errorMessage = "Validation of Taker Tx returned: " + txValidator.toString();
-                log.warn(errorMessage);
-                // prompt user to open mediation
-                if (trade.getDisputeState() == Trade.DisputeState.NO_DISPUTE) {
-                    UserThread.runAfter(() -> {
-                        Popup popup = new Popup();
-                        popup.headLine(Res.get("portfolio.pending.openSupportTicket.headline"))
-                                .message(Res.get("portfolio.pending.invalidTx", errorMessage))
-                                .actionButtonText(Res.get("portfolio.pending.openSupportTicket.headline"))
-                                .onAction(dataModel::onOpenSupportTicket)
-                                .closeButtonText(Res.get("shared.cancel"))
-                                .onClose(popup::hide)
-                                .show();
-                    }, 100, TimeUnit.MILLISECONDS);
+    public void checkForTimeoutAtTradeStep1() {
+        if (trade == null) {
+            return;
+        }
+        // Trade is waiting confirmation.  If it has been unconfirmed for too long, prompt the user.
+        long unconfirmedHours = Duration.between(trade.getDate().toInstant(), Instant.now()).toHours();
+        if (unconfirmedHours >= 24 && !trade.hasFailed()) {
+            // PR #6994 - only show a warning popup if a block explorer says it has confirmed
+            mempoolService.checkTxIsConfirmed(trade.getDepositTxId(), (validator -> {
+                long confirms = validator.parseJsonValidateTx();
+                log.info("Mempool lookup of deposit tx returned {} confirms for trade {}", confirms, trade.getShortId());
+                if (confirms < 1) {
+                    return;
                 }
-            }
-        }));
+                String key = "tradeUnconfirmedTooLong_" + trade.getShortId();
+                if (DontShowAgainLookup.showAgain(key)) {
+                    new Popup().warning(Res.get("portfolio.pending.unconfirmedTooLong", trade.getShortId(), unconfirmedHours))
+                            .dontShowAgainId(key)
+                            .actionButtonText(Res.get("settings.net.reSyncSPVChainButton"))
+                            .closeButtonText(Res.get("shared.ok"))
+                            .onAction(GUIUtil::reSyncSPVChain)
+                            .show();
+                }
+            }));
+        }
+    }
+
+    public void checkTakerFeeTx(Trade trade) {
+        UserThread.runAfter(() -> {
+            mempoolService.validateOfferTakerTx(trade, (txValidator -> {
+                if (txValidator.getStatus().fail()) {
+                    String errorMessage = txValidator.getStatus().toString();
+                    log.warn(errorMessage);
+                    // prompt user to open mediation
+                    if (trade.getDisputeState() == Trade.DisputeState.NO_DISPUTE) {
+                        UserThread.runAfter(() -> {
+                            Popup popup = new Popup();
+                            popup.headLine(Res.get("portfolio.pending.openSupportTicket.headline"))
+                                    .message(Res.get("portfolio.pending.invalidTx", errorMessage))
+                                    .actionButtonText(Res.get("portfolio.pending.openSupportTicket.headline"))
+                                    .onAction(dataModel::onOpenSupportTicket)
+                                    .closeButtonText(Res.get("shared.cancel"))
+                                    .onClose(popup::hide)
+                                    .show();
+                        }, 100, TimeUnit.MILLISECONDS);
+                    }
+                }
+            }));
+        }, Math.max(5000 - trade.getTradeAge(), 100), TimeUnit.MILLISECONDS);
+        // we wait until the trade has confirmed for at least 5 seconds to allow for DAO to process the block
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////

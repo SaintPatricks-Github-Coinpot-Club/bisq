@@ -97,6 +97,7 @@ public class FullNode extends BsqNode {
 
     public void shutDown() {
         super.shutDown();
+        rpcService.shutDown();
         fullNodeNetworkService.shutDown();
     }
 
@@ -163,7 +164,8 @@ public class FullNode extends BsqNode {
                                 chainTipHeight = blockHeight;
 
                             doParseBlock(rawBlock).ifPresent(this::onNewBlock);
-                        } catch (RequiredReorgFromSnapshotException ignore) {
+                        } catch (RequiredReorgFromSnapshotException e) {
+                            log.warn("doParseBlock at addBlockHandler failed because of a blockchain reorg. {}", e.toString());
                         }
                     },
                     this::handleError);
@@ -239,6 +241,9 @@ public class FullNode extends BsqNode {
                                        Consumer<Block> newBlockHandler,
                                        ResultHandler resultHandler,
                                        Consumer<Throwable> errorHandler) {
+        if (shutdownInProgress) {
+            return;
+        }
         rpcService.requestDtoBlock(blockHeight,
                 rawBlock -> {
                     try {
@@ -252,8 +257,8 @@ public class FullNode extends BsqNode {
                             // We are done
                             resultHandler.handleResult();
                         }
-                    } catch (RequiredReorgFromSnapshotException ignore) {
-                        // If we get a reorg we don't continue to call parseBlockRecursively
+                    } catch (RequiredReorgFromSnapshotException e) {
+                        log.warn("doParseBlock at parseBlockRecursively failed because of a blockchain reorg. {}", e.toString());
                     }
                 },
                 errorHandler);
@@ -265,7 +270,7 @@ public class FullNode extends BsqNode {
             if (numExceptions > 10) {
                 log.warn("We got {} RPC HttpExceptions at our block handler.", numExceptions);
                 pendingBlocks.clear();
-                startReOrgFromLastSnapshot();
+                revertToLastSnapshot();
                 startParseBlocks();
                 numExceptions = 0;
             }
@@ -296,7 +301,7 @@ public class FullNode extends BsqNode {
                         return;
                     } else if (cause instanceof NotificationHandlerException) {
                         log.error("Error from within block notification daemon: {}", cause.getCause().toString());
-                        startReOrgFromLastSnapshot();
+                        revertToLastSnapshot();
                         startParseBlocks();
                         return;
                     } else if (cause instanceof Error) {
@@ -308,5 +313,9 @@ public class FullNode extends BsqNode {
             if (errorMessageHandler != null)
                 errorMessageHandler.accept(errorMessage);
         }
+    }
+
+    private void revertToLastSnapshot() {
+        daoStateSnapshotService.revertToLastSnapshot();
     }
 }

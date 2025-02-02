@@ -33,18 +33,18 @@ public class DisputeAgentLookupMap {
             return fullAddress; // on regtest, agent displays as localhost
         }
         switch (fullAddress) {
-            case "7hkpotiyaukuzcfy6faihjaols5r2mkysz7bm3wrhhbpbphzz3zbwyqd.onion:9999":
+            case "saavbszijyrqrj4opgiirusnrpv6ntabttuzvjaqmx7j4r7mlz5eibqd.onion:9999":
+            case "7hkpotiyaukuzcfy6faihjaols5r2mkysz7bm3wrhhbpbphzz3zbwyqd.onion:9999": //old
                 return "leo816";
-            case "wizbisqzd7ku25di7p2ztsajioabihlnyp5lq5av66tmu7do2dke2tid.onion:9999":
-                return "wiz";
-            case "apbp7ubuyezav4hy.onion:9999":
-                return "bisq_knight";
-            case "a56olqlmmpxrn5q34itq5g5tb5d3fg7vxekpbceq7xqvfl3cieocgsyd.onion:9999":
-                return "huey735";
             case "3z5jnirlccgxzoxc6zwkcgwj66bugvqplzf6z2iyd5oxifiaorhnanqd.onion:9999":
                 return "refundagent2";
-            case "6c4cim7h7t3bm4bnchbf727qrhdfrfr6lhod25wjtizm2sifpkktvwad.onion:9999":
+            case "aguejpkhhl67nbtifvekfjvlcyagudi6d2apalcwxw7fl5n7qm2ll5id.onion:9999":
+                return "luis3672";
+            case "d7m3j3u4jo2yuymgvxisklpitd3n5xbsnnpyz2mjh6bl6gmj5rjdxead.onion:9999":
+            case "6c4cim7h7t3bm4bnchbf727qrhdfrfr6lhod25wjtizm2sifpkktvwad.onion:9999": //old
                 return "pazza83";
+            case "5wmuzi76l4ogbdh6ahvdafzlebk4c3sp3q5njhz5h5qa5fwbalexa7id.onion:9999":
+                return "suddenwhipvapor";
             default:
                 log.warn("No user name for dispute agent with address {} found.", fullAddress);
                 return Res.get("shared.na");

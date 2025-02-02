@@ -51,7 +51,7 @@ public class ProcessOfferAvailabilityResponse extends Task<OfferAvailabilityMode
 
             if (offerAvailabilityResponse.getAvailabilityResult() != AvailabilityResult.AVAILABLE) {
                 offer.setState(Offer.State.NOT_AVAILABLE);
-                failed("Take offer attempt rejected because of: " + offerAvailabilityResponse.getAvailabilityResult());
+                failed(offerAvailabilityResponse.getAvailabilityResult().getDescription());
                 return;
             }
 
@@ -62,7 +62,7 @@ public class ProcessOfferAvailabilityResponse extends Task<OfferAvailabilityMode
             NodeAddress mediator = offerAvailabilityResponse.getMediator();
             if (mediator == null) {
                 // We do not get a mediator from old clients so we need to handle the null case.
-                mediator = DisputeAgentSelection.getLeastUsedMediator(model.getTradeStatisticsManager(), model.getMediatorManager()).getNodeAddress();
+                mediator = DisputeAgentSelection.getRandomMediator(model.getMediatorManager()).getNodeAddress();
             }
             model.setSelectedMediator(mediator);
 

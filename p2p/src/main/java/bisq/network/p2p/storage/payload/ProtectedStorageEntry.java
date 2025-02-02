@@ -21,6 +21,7 @@ import bisq.network.p2p.storage.P2PDataStorage;
 
 import bisq.common.crypto.CryptoException;
 import bisq.common.crypto.Sig;
+import bisq.common.proto.network.GetDataResponsePriority;
 import bisq.common.proto.network.NetworkPayload;
 import bisq.common.proto.network.NetworkProtoResolver;
 import bisq.common.proto.persistable.PersistablePayload;
@@ -30,6 +31,8 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
 
 import com.google.common.base.Preconditions;
+
+import org.bouncycastle.util.encoders.Hex;
 
 import java.security.PublicKey;
 
@@ -147,6 +150,10 @@ public class ProtectedStorageEntry implements NetworkPayload, PersistablePayload
                 (clock.millis() - creationTimeStamp) > ((ExpirablePayload) protectedStoragePayload).getTTL();
     }
 
+    public GetDataResponsePriority getGetDataResponsePriority() {
+        return protectedStoragePayload.getGetDataResponsePriority();
+    }
+
     /*
      * Returns true if the Entry is valid for an add operation. For non-mailbox Entrys, the entry owner must
      * match the payload owner.
@@ -210,7 +217,9 @@ public class ProtectedStorageEntry implements NetworkPayload, PersistablePayload
             boolean result = Sig.verify(this.ownerPubKey, hashOfDataAndSeqNr, this.signature);
 
             if (!result)
-                log.warn("ProtectedStorageEntry::isSignatureValid() failed.\n{}}", this);
+                log.warn("Invalid signature for {}.\nSerialized data as hex={}}",
+                        protectedStoragePayload.getClass().getSimpleName(),
+                        Hex.toHexString(protectedStoragePayload.toProtoMessage().toByteArray()));
 
             return result;
         } catch (CryptoException e) {

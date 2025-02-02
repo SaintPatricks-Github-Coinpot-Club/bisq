@@ -100,6 +100,7 @@
 
 # Set up everything necessary for deploying your localnet. This is the
 # default target.
+.PHONY: build bitcoind seednode seednode2 mediator alice bob block blocks
 setup: build .localnet
 
 clean: clean-build clean-localnet
@@ -195,6 +196,7 @@ seednode: seednode/build
 		--useLocalhostForP2P=true \
 		--useDevPrivilegeKeys=true \
 		--fullDaoNode=true \
+		--isBmFullNode=true \
 		--rpcUser=bisqdao \
 		--rpcPassword=bsq \
 		--rpcBlockNotificationPort=5120 \
@@ -208,6 +210,7 @@ seednode2: seednode/build
 		--useLocalhostForP2P=true \
 		--useDevPrivilegeKeys=true \
 		--fullDaoNode=true \
+		--isBmFullNode=true \
 		--rpcUser=bisqdao \
 		--rpcPassword=bsq \
 		--rpcBlockNotificationPort=5121 \
@@ -231,6 +234,7 @@ alice: setup
 		--useDevPrivilegeKeys=true \
 		--nodePort=5555 \
 		--fullDaoNode=true \
+		--isBmFullNode=true \
 		--rpcUser=bisqdao \
 		--rpcPassword=bsq \
 		--rpcBlockNotificationPort=5122 \
@@ -276,5 +280,3 @@ blocks:
     				-rpcuser=bisqdao \
 					-rpcpassword=bsq \
     				generatetoaddress $(n)
-
-.PHONY: build seednode

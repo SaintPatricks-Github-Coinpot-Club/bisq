@@ -204,10 +204,12 @@ public class DomainInitialisation {
                                    Consumer<String> daoErrorMessageHandler,
                                    Consumer<String> daoWarnMessageHandler,
                                    Consumer<String> filterWarningHandler,
+                                   Consumer<String> chainNotSyncedHandler,
+                                   Consumer<String> offerDisabledHandler,
                                    Consumer<VoteResultException> voteResultExceptionHandler,
                                    Consumer<List<RevolutAccount>> revolutAccountsUpdateHandler,
                                    Consumer<List<AmazonGiftCardAccount>> amazonGiftCardAccountsUpdateHandler,
-                                   Runnable daoRequiresRestartHandler) {
+                                   Runnable resyncDaoStateFromResourcesHandler) {
         clockWatcher.start();
 
         PersistenceManager.onAllServicesInitialized();
@@ -225,6 +227,7 @@ public class DomainInitialisation {
         failedTradesManager.onAllServicesInitialized();
         xmrTxProofService.onAllServicesInitialized();
 
+        openOfferManager.setChainNotSyncedHandler(chainNotSyncedHandler);
         openOfferManager.onAllServicesInitialized();
         openBsqSwapOfferService.onAllServicesInitialized();
 
@@ -253,7 +256,7 @@ public class DomainInitialisation {
                 daoWarnMessageHandler.accept(warningMessage);
         });
 
-        daoStateSnapshotService.setDaoRequiresRestartHandler(daoRequiresRestartHandler);
+        daoStateSnapshotService.setResyncDaoStateFromResourcesHandler(resyncDaoStateFromResourcesHandler);
 
         tradeStatisticsManager.onAllServicesInitialized();
 
@@ -278,7 +281,7 @@ public class DomainInitialisation {
         disputeMsgEvents.onAllServicesInitialized();
         priceAlert.onAllServicesInitialized();
         marketAlerts.onAllServicesInitialized();
-        triggerPriceService.onAllServicesInitialized();
+        triggerPriceService.onAllServicesInitialized(offerDisabledHandler);
         mempoolService.onAllServicesInitialized();
 
         mailboxMessageService.onAllServicesInitialized();

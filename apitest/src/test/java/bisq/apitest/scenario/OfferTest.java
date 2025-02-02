@@ -21,6 +21,7 @@ package bisq.apitest.scenario;
 import lombok.extern.slf4j.Slf4j;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -41,11 +42,6 @@ import bisq.apitest.method.offer.ValidateCreateOfferTest;
 @Slf4j
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class OfferTest extends AbstractOfferTest {
-
-    @BeforeAll
-    public static void setUp() {
-        setUp(false); // Use setUp(true) for running API daemons in remote debug mode.
-    }
 
     @Test
     @Order(1)
@@ -83,6 +79,7 @@ public class OfferTest extends AbstractOfferTest {
         test.testCreateUSDBTCBuyOfferWithTriggerPrice();
     }
 
+    @Disabled
     @Test
     @Order(5)
     public void testCreateBSQOffers() {

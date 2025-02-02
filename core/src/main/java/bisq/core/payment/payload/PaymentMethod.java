@@ -23,14 +23,18 @@ import bisq.core.locale.TradeCurrency;
 import bisq.core.payment.TradeLimits;
 
 import bisq.common.proto.persistable.PersistablePayload;
+import bisq.common.util.MathUtils;
 
 import org.bitcoinj.core.Coin;
 
-import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -38,8 +42,6 @@ import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 
 import org.jetbrains.annotations.NotNull;
-
-import static com.google.common.base.Preconditions.checkNotNull;
 
 @EqualsAndHashCode(exclude = {"maxTradePeriod", "maxTradeLimit"})
 @ToString
@@ -49,6 +51,9 @@ public final class PaymentMethod implements PersistablePayload, Comparable<Payme
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Static
     ///////////////////////////////////////////////////////////////////////////////////////////
+
+    // For sorting payment methods, we want names that contain only ASCII and Extended-ASCII to go *below* other languages
+    private static final Pattern ASCII_PATTERN = Pattern.compile("[\\x00-\\xFF]*");
 
     // time in blocks (average 10 min for one block confirmation
     private static final long DAY = TimeUnit.HOURS.toMillis(24);
@@ -122,6 +127,8 @@ public final class PaymentMethod implements PersistablePayload, Comparable<Payme
     public static final String ACH_TRANSFER_ID = "ACH_TRANSFER";
     public static final String DOMESTIC_WIRE_TRANSFER_ID = "DOMESTIC_WIRE_TRANSFER";
     public static final String BSQ_SWAP_ID = "BSQ_SWAP";
+    public static final String MERCADO_PAGO_ID = "MERCADO_PAGO";
+    public static final String SBP_ID = "SBP";
 
     // Cannot be deleted as it would break old trade history entries
     @Deprecated
@@ -185,6 +192,8 @@ public final class PaymentMethod implements PersistablePayload, Comparable<Payme
     public static PaymentMethod ACH_TRANSFER;
     public static PaymentMethod DOMESTIC_WIRE_TRANSFER;
     public static PaymentMethod BSQ_SWAP;
+    public static PaymentMethod MERCADO_PAGO;
+    public static PaymentMethod SBP;
 
     // Cannot be deleted as it would break old trade history entries
     @Deprecated
@@ -196,8 +205,7 @@ public final class PaymentMethod implements PersistablePayload, Comparable<Payme
 
     // The limit and duration assignment must not be changed as that could break old offers (if amount would be higher
     // than new trade limit) and violate the maker expectation when he created the offer (duration).
-    @Getter
-    private final static List<PaymentMethod> paymentMethods = new ArrayList<>(Arrays.asList(
+    private static final List<PaymentMethod> PAYMENT_METHODS = Stream.of(
             // EUR
             SEPA = new PaymentMethod(SEPA_ID, 6 * DAY, DEFAULT_TRADE_LIMIT_HIGH_RISK),
             SEPA_INSTANT = new PaymentMethod(SEPA_INSTANT_ID, DAY, DEFAULT_TRADE_LIMIT_HIGH_RISK),
@@ -264,6 +272,9 @@ public final class PaymentMethod implements PersistablePayload, Comparable<Payme
             // Australia
             AUSTRALIA_PAYID = new PaymentMethod(AUSTRALIA_PAYID_ID, DAY, DEFAULT_TRADE_LIMIT_LOW_RISK),
 
+            // Argentina
+            MERCADO_PAGO = new PaymentMethod(MERCADO_PAGO_ID, DAY, DEFAULT_TRADE_LIMIT_HIGH_RISK),
+
             // China
             ALI_PAY = new PaymentMethod(ALI_PAY_ID, DAY, DEFAULT_TRADE_LIMIT_LOW_RISK),
             WECHAT_PAY = new PaymentMethod(WECHAT_PAY_ID, DAY, DEFAULT_TRADE_LIMIT_LOW_RISK),
@@ -271,24 +282,24 @@ public final class PaymentMethod implements PersistablePayload, Comparable<Payme
             // Thailand
             PROMPT_PAY = new PaymentMethod(PROMPT_PAY_ID, DAY, DEFAULT_TRADE_LIMIT_LOW_RISK),
 
+            // Russia
+            SBP = new PaymentMethod(SBP_ID, DAY, DEFAULT_TRADE_LIMIT_HIGH_RISK),
+
             // Altcoins
             BLOCK_CHAINS = new PaymentMethod(BLOCK_CHAINS_ID, DAY, DEFAULT_TRADE_LIMIT_VERY_LOW_RISK),
             // Altcoins with 1 hour trade period
             BLOCK_CHAINS_INSTANT = new PaymentMethod(BLOCK_CHAINS_INSTANT_ID, TimeUnit.HOURS.toMillis(1), DEFAULT_TRADE_LIMIT_VERY_LOW_RISK),
             // BsqSwap
             BSQ_SWAP = new PaymentMethod(BSQ_SWAP_ID, 1, DEFAULT_TRADE_LIMIT_VERY_LOW_RISK)
-    ));
+    ).sorted(Comparator.comparing(
+            m -> m.id.equals(CLEAR_X_CHANGE_ID) ? "ZELLE" : m.id)
+    ).collect(Collectors.toUnmodifiableList());
 
-    static {
-        paymentMethods.sort((o1, o2) -> {
-            String id1 = o1.getId();
-            if (id1.equals(CLEAR_X_CHANGE_ID))
-                id1 = "ZELLE";
-            String id2 = o2.getId();
-            if (id2.equals(CLEAR_X_CHANGE_ID))
-                id2 = "ZELLE";
-            return id1.compareTo(id2);
-        });
+    private static final Map<String, PaymentMethod> PAYMENT_METHOD_MAP = PAYMENT_METHODS.stream()
+            .collect(Collectors.toUnmodifiableMap(m -> m.id, m -> m));
+
+    public static List<PaymentMethod> getPaymentMethods() {
+        return PAYMENT_METHODS;
     }
 
     public static PaymentMethod getDummyPaymentMethod(String id) {
@@ -371,18 +382,27 @@ public final class PaymentMethod implements PersistablePayload, Comparable<Payme
 
     // We look up only our active payment methods not retired ones.
     public static Optional<PaymentMethod> getActivePaymentMethod(String id) {
-        return paymentMethods.stream()
-                .filter(e -> e.getId().equals(id))
-                .findFirst();
+        return Optional.ofNullable(PAYMENT_METHOD_MAP.get(id));
     }
 
+    // We leave currencyCode as param for being flexible if we need custom handling of a currency in future
+    // again (as we had in the past)
     public Coin getMaxTradeLimitAsCoin(String currencyCode) {
-        // Hack for SF as the smallest unit is 1 SF ;-( and price is about 3 BTC!
-        if (currencyCode.equals("SF"))
-            return Coin.parseCoin("4");
-        // payment methods which define their own trade limits
+        // We adjust the custom trade limits with the factor of the change of the DAO param. Initially it was set to 2 BTC.
+        long initialTradeLimit = 200000000;
+        TradeLimits tradeLimits = TradeLimits.getINSTANCE();
+        if (tradeLimits == null) {
+            // is null in some tests...
+            log.warn("tradeLimits was null");
+            return Coin.valueOf(initialTradeLimit);
+        }
+        long maxTradeLimitFromDaoParam = tradeLimits.getMaxTradeLimitFromDaoParam().value;
+
+        // Payment methods which define their own trade limits
         if (id.equals(NEFT_ID) || id.equals(UPI_ID) || id.equals(PAYTM_ID) || id.equals(BIZUM_ID) || id.equals(TIKKIE_ID)) {
-            return Coin.valueOf(maxTradeLimit);
+            double factor = maxTradeLimitFromDaoParam / (double) initialTradeLimit;
+            long value = MathUtils.roundDoubleToLong(Coin.valueOf(maxTradeLimit).getValue() * factor);
+            return Coin.valueOf(value);
         }
 
         // We use the class field maxTradeLimit only for mapping the risk factor.
@@ -402,10 +422,7 @@ public final class PaymentMethod implements PersistablePayload, Comparable<Payme
                     Coin.valueOf(maxTradeLimit).toFriendlyString(), this);
         }
 
-        TradeLimits tradeLimits = TradeLimits.getINSTANCE();
-        checkNotNull(tradeLimits, "tradeLimits must not be null");
-        long maxTradeLimit = tradeLimits.getMaxTradeLimit().value;
-        return Coin.valueOf(tradeLimits.getRoundedRiskBasedTradeLimit(maxTradeLimit, riskFactor));
+        return Coin.valueOf(tradeLimits.getRoundedRiskBasedTradeLimit(maxTradeLimitFromDaoParam, riskFactor));
     }
 
     public String getShortName() {
@@ -416,7 +433,14 @@ public final class PaymentMethod implements PersistablePayload, Comparable<Payme
 
     @Override
     public int compareTo(@NotNull PaymentMethod other) {
-        return Res.get(id).compareTo(Res.get(other.id));
+        // Not all accounts have translations into other languages, and when mixed with Latin they sort to the bottom.
+        // So we need some extra logic to get the Latin to sort separately underneath the non-Latin.
+        boolean isLatin = ASCII_PATTERN.matcher(Res.get(id)).matches();
+        boolean otherIsLatin = ASCII_PATTERN.matcher(Res.get(other.id)).matches();
+        if(isLatin == otherIsLatin)
+            return Res.get(id).compareTo(Res.get(other.id));
+        else
+            return isLatin ? 1 : -1;
     }
 
     public String getDisplayString() {

@@ -31,12 +31,14 @@ import bisq.core.offer.bisq_v1.OfferPayload;
 import bisq.core.provider.price.MarketPrice;
 import bisq.core.provider.price.PriceFeedService;
 import bisq.core.support.SupportManager;
+import bisq.core.support.dispute.mediation.MediationResultState;
 import bisq.core.support.dispute.messages.DisputeResultMessage;
 import bisq.core.support.dispute.messages.OpenNewDisputeMessage;
 import bisq.core.support.dispute.messages.PeerOpenedDisputeMessage;
 import bisq.core.support.messages.ChatMessage;
 import bisq.core.trade.ClosedTradableManager;
 import bisq.core.trade.TradeManager;
+import bisq.core.trade.bisq_v1.FailedTradesManager;
 import bisq.core.trade.bisq_v1.TradeDataValidation;
 import bisq.core.trade.model.bisq_v1.Contract;
 import bisq.core.trade.model.bisq_v1.Trade;
@@ -90,6 +92,7 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
     protected final BtcWalletService btcWalletService;
     protected final TradeManager tradeManager;
     protected final ClosedTradableManager closedTradableManager;
+    private final FailedTradesManager failedTradesManager;
     protected final OpenOfferManager openOfferManager;
     protected final PubKeyRing pubKeyRing;
     protected final DisputeListService<T> disputeListService;
@@ -115,6 +118,7 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
                           WalletsSetup walletsSetup,
                           TradeManager tradeManager,
                           ClosedTradableManager closedTradableManager,
+                          FailedTradesManager failedTradesManager,
                           OpenOfferManager openOfferManager,
                           DaoFacade daoFacade,
                           KeyRing keyRing,
@@ -127,6 +131,7 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
         this.btcWalletService = btcWalletService;
         this.tradeManager = tradeManager;
         this.closedTradableManager = closedTradableManager;
+        this.failedTradesManager = failedTradesManager;
         this.openOfferManager = openOfferManager;
         this.daoFacade = daoFacade;
         this.pubKeyRing = keyRing.getPubKeyRing();
@@ -252,8 +257,9 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
 
         p2PService.addP2PServiceListener(new BootstrapListener() {
             @Override
-            public void onUpdatedDataReceived() {
+            public void onDataReceived() {
                 tryApplyMessages();
+                checkDisputesForUpdates();
             }
         });
 
@@ -263,8 +269,9 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
         });
 
         walletsSetup.numPeersProperty().addListener((observable, oldValue, newValue) -> {
-            if (walletsSetup.hasSufficientPeersForBroadcast())
+            if (walletsSetup.hasSufficientPeersForBroadcast()) {
                 tryApplyMessages();
+            }
         });
 
         tryApplyMessages();
@@ -273,8 +280,10 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
         List<Dispute> disputes = getDisputeList().getList();
         disputes.forEach(dispute -> {
             try {
-                DisputeValidation.validateDonationAddressMatchesAnyPastParamValues(dispute, dispute.getDonationAddressOfDelayedPayoutTx(), daoFacade);
                 DisputeValidation.validateNodeAddresses(dispute, config);
+                if (dispute.isUsingLegacyBurningMan()) {
+                    DisputeValidation.validateDonationAddressMatchesAnyPastParamValues(dispute, dispute.getDonationAddressOfDelayedPayoutTx(), daoFacade);
+                }
             } catch (DisputeValidation.AddressException | DisputeValidation.NodeAddressException e) {
                 log.error(e.toString());
                 validationExceptions.add(e);
@@ -288,6 +297,46 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
                 });
 
         maybeClearSensitiveData();
+    }
+
+    private void checkDisputesForUpdates() {
+        List<Dispute> disputes = getDisputeList().getList();
+        disputes.forEach(dispute -> {
+            if (dispute.isResultProposed()) {
+                // an open dispute where the mediator has proposed a result.  has the trade moved on?
+                // if so, dispute can close and the mediator needs to be informed so they can close their ticket.
+                tradeManager.getTradeById(dispute.getTradeId()).ifPresentOrElse(
+                        t -> checkForMediatedTradePayout(t, dispute),
+                        () -> closedTradableManager.getTradableById(dispute.getTradeId()).ifPresent(
+                                t -> checkForMediatedTradePayout((Trade) t, dispute)));
+            }
+        });
+    }
+
+    protected void checkForMediatedTradePayout(Trade trade, Dispute dispute) {
+        if (trade.disputeStateProperty().get().isArbitrated() || trade.getTradePhase() == Trade.Phase.PAYOUT_PUBLISHED) {
+            disputedTradeUpdate(trade.getDisputeState().toString(), dispute, true);
+        } else {
+            // user accepted/rejected mediation proposal (before lockup period has expired)
+            trade.mediationResultStateProperty().addListener((observable, oldValue, newValue) -> {
+                if (newValue == MediationResultState.MEDIATION_RESULT_ACCEPTED ||
+                        newValue == MediationResultState.MEDIATION_RESULT_REJECTED) {
+                    disputedTradeUpdate(newValue.toString(), dispute, false);
+                }
+            });
+            // user rejected mediation after lockup period: opening arbitration
+            trade.disputeStateProperty().addListener((observable, oldValue, newValue) -> {
+                if (newValue.isArbitrated()) {
+                    disputedTradeUpdate(newValue.toString(), dispute, true);
+                }
+            });
+            // trade paid out through mediation
+            trade.statePhaseProperty().addListener((observable, oldValue, newValue) -> {
+                if (newValue == Trade.Phase.PAYOUT_PUBLISHED) {
+                    disputedTradeUpdate(newValue.toString(), dispute, true);
+                }
+            });
+        }
     }
 
     public boolean isTrader(Dispute dispute) {
@@ -317,6 +366,24 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Message handler
     ///////////////////////////////////////////////////////////////////////////////////////////
+
+    public boolean agentCheckDisputeHealth(Dispute disputeToCheck) {
+        // checking from the agent perspective only
+        if (disputeToCheck.getChatMessages().stream().anyMatch(ChatMessage::isSenderIsTrader)) {
+            return true;
+        }
+        // consider only messages which have been transmitted
+        List<ChatMessage> transmittedMessages = disputeToCheck.getChatMessages().stream()
+                .filter(e -> !e.isSystemMessage())
+                .filter(e -> !e.getStoredInMailboxProperty().get())
+                .collect(Collectors.toList());
+        if (transmittedMessages.size() == 0) {
+            return true;
+        }
+        // dispute is healthy if any transmitted message has been ACKd by the peer
+        return transmittedMessages.stream()
+                .anyMatch(e -> e.acknowledgedProperty().get());
+    }
 
     // dispute agent receives that from trader who opens dispute
     protected void onOpenNewDisputeMessage(OpenNewDisputeMessage openNewDisputeMessage) {
@@ -371,8 +438,10 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
             DisputeValidation.validateDisputeData(dispute, btcWalletService);
             DisputeValidation.validateNodeAddresses(dispute, config);
             DisputeValidation.validateSenderNodeAddress(dispute, openNewDisputeMessage.getSenderNodeAddress());
-            DisputeValidation.validateDonationAddressMatchesAnyPastParamValues(dispute, dispute.getDonationAddressOfDelayedPayoutTx(), daoFacade);
             DisputeValidation.testIfDisputeTriesReplay(dispute, disputeList.getList());
+            if (dispute.isUsingLegacyBurningMan()) {
+                DisputeValidation.validateDonationAddressMatchesAnyPastParamValues(dispute, dispute.getDonationAddressOfDelayedPayoutTx(), daoFacade);
+            }
         } catch (DisputeValidation.ValidationException e) {
             log.error(e.toString());
             validationExceptions.add(e);
@@ -382,32 +451,50 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
 
     // Not-dispute-requester receives that msg from dispute agent
     protected void onPeerOpenedDisputeMessage(PeerOpenedDisputeMessage peerOpenedDisputeMessage) {
+        Dispute dispute = peerOpenedDisputeMessage.getDispute();
+        tradeManager.getTradeById(dispute.getTradeId()).ifPresentOrElse(
+            trade -> peerOpenedDisputeForTrade(peerOpenedDisputeMessage, dispute, trade),
+            () -> closedTradableManager.getTradableById(dispute.getTradeId()).ifPresentOrElse(
+                closedTradable -> newDisputeRevertsClosedTrade(peerOpenedDisputeMessage, dispute, (Trade)closedTradable),
+                () -> failedTradesManager.getTradeById(dispute.getTradeId()).ifPresent(
+                    trade -> newDisputeRevertsFailedTrade(peerOpenedDisputeMessage, dispute, trade))));
+    }
+
+    private void newDisputeRevertsFailedTrade(PeerOpenedDisputeMessage peerOpenedDisputeMessage, Dispute dispute, Trade trade) {
+        log.info("Peer dispute ticket received, reverting failed trade {} to pending", trade.getShortId());
+        failedTradesManager.removeTrade(trade);
+        tradeManager.addTradeToPendingTrades(trade);
+        peerOpenedDisputeForTrade(peerOpenedDisputeMessage, dispute, trade);
+    }
+
+    private void newDisputeRevertsClosedTrade(PeerOpenedDisputeMessage peerOpenedDisputeMessage, Dispute dispute, Trade trade) {
+        log.info("Peer dispute ticket received, reverting closed trade {} to pending", trade.getShortId());
+        closedTradableManager.remove(trade);
+        tradeManager.addTradeToPendingTrades(trade);
+        peerOpenedDisputeForTrade(peerOpenedDisputeMessage, dispute, trade);
+    }
+
+    private void peerOpenedDisputeForTrade(PeerOpenedDisputeMessage peerOpenedDisputeMessage, Dispute dispute, Trade trade) {
+        String errorMessage = null;
         T disputeList = getDisputeList();
         if (disputeList == null) {
             log.warn("disputes is null");
             return;
         }
 
-        String errorMessage = null;
-        Dispute dispute = peerOpenedDisputeMessage.getDispute();
-
-        Optional<Trade> optionalTrade = tradeManager.getTradeById(dispute.getTradeId());
-        if (optionalTrade.isEmpty()) {
-            return;
-        }
-
-        Trade trade = optionalTrade.get();
         try {
             DisputeValidation.validateDisputeData(dispute, btcWalletService);
             DisputeValidation.validateNodeAddresses(dispute, config);
             DisputeValidation.validateTradeAndDispute(dispute, trade);
-            DisputeValidation.validateDonationAddress(dispute,
-                    Objects.requireNonNull(trade.getDelayedPayoutTx()),
-                    btcWalletService.getParams(),
-                    daoFacade);
             TradeDataValidation.validateDelayedPayoutTx(trade,
                     trade.getDelayedPayoutTx(),
                     btcWalletService);
+            if (dispute.isUsingLegacyBurningMan()) {
+                DisputeValidation.validateDonationAddress(dispute,
+                        Objects.requireNonNull(trade.getDelayedPayoutTx()),
+                        btcWalletService.getParams());
+                DisputeValidation.validateDonationAddressMatchesAnyPastParamValues(dispute, dispute.getDonationAddressOfDelayedPayoutTx(), daoFacade);
+            }
         } catch (TradeDataValidation.ValidationException | DisputeValidation.ValidationException e) {
             // The peer sent us an invalid donation address. We do not return here as we don't want to break
             // mediation/arbitration and log only the issue. The dispute agent will run validation as well and will get
@@ -618,6 +705,8 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
         dispute.setExtraDataMap(disputeFromOpener.getExtraDataMap());
         dispute.setDelayedPayoutTxId(disputeFromOpener.getDelayedPayoutTxId());
         dispute.setDonationAddressOfDelayedPayoutTx(disputeFromOpener.getDonationAddressOfDelayedPayoutTx());
+        dispute.setBurningManSelectionHeight(disputeFromOpener.getBurningManSelectionHeight());
+        dispute.setTradeTxFee(disputeFromOpener.getTradeTxFee());
 
         Optional<Dispute> storedDisputeOptional = findDispute(dispute);
 
@@ -642,11 +731,13 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
         chatMessage.setSystemMessage(true);
         dispute.addAndPersistChatMessage(chatMessage);
 
-        addPriceInfoMessage(dispute, 0);
-
         disputeList.add(dispute);
+        sendDisputeOpeningMsg(dispute);
+    }
 
+    public void sendDisputeOpeningMsg(Dispute dispute) {
         // We mirrored dispute already!
+        ChatMessage chatMessage = dispute.getChatMessages().get(0);
         Contract contract = dispute.getContract();
         PubKeyRing peersPubKeyRing = dispute.isDisputeOpenerIsBuyer() ? contract.getBuyerPubKeyRing() : contract.getSellerPubKeyRing();
         NodeAddress peersNodeAddress = dispute.isDisputeOpenerIsBuyer() ? contract.getBuyerNodeAddress() : contract.getSellerNodeAddress();
@@ -711,6 +802,7 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
                     }
                 }
         );
+        addPriceInfoMessage(dispute, 0);
         requestPersistence();
     }
 
@@ -889,17 +981,23 @@ public abstract class DisputeManager<T extends DisputeList<Dispute>> extends Sup
         }
     }
 
-    public void addMediationReOpenedMessage(Dispute dispute, boolean senderIsTrader) {
+    // when a mediated trade changes, send a system message informing the mediator, so they can maybe close their ticket.
+    public void disputedTradeUpdate(String message, Dispute dispute, boolean close) {
+        if (dispute.isClosed()) {
+            return;
+        }
         ChatMessage chatMessage = new ChatMessage(
                 getSupportType(),
                 dispute.getTradeId(),
                 dispute.getTraderId(),
-                senderIsTrader,
-                Res.get("support.info.disputeReOpened"),
+                true,
+                Res.get("support.info.disputedTradeUpdate", message),
                 p2PService.getAddress());
-        chatMessage.setSystemMessage(false);
-        dispute.addAndPersistChatMessage(chatMessage);
-        this.sendChatMessage(chatMessage);
+        chatMessage.setSystemMessage(true);
+        this.sendChatMessage(chatMessage);  // inform the mediator
+        if (close) {
+            dispute.setIsClosed();              // close the trader's ticket
+        }
         requestPersistence();
     }
 

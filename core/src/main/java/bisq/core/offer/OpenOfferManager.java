@@ -22,6 +22,11 @@ import bisq.core.btc.wallet.BsqWalletService;
 import bisq.core.btc.wallet.BtcWalletService;
 import bisq.core.btc.wallet.TradeWalletService;
 import bisq.core.dao.DaoFacade;
+import bisq.core.dao.burningman.BtcFeeReceiverService;
+import bisq.core.dao.burningman.DelayedPayoutTxReceiverService;
+import bisq.core.dao.state.DaoStateListener;
+import bisq.core.dao.state.DaoStateService;
+import bisq.core.dao.state.model.blockchain.Block;
 import bisq.core.exceptions.TradePriceOutOfToleranceException;
 import bisq.core.filter.FilterManager;
 import bisq.core.locale.Res;
@@ -34,6 +39,7 @@ import bisq.core.offer.bisq_v1.MarketPriceNotAvailableException;
 import bisq.core.offer.bisq_v1.OfferPayload;
 import bisq.core.offer.placeoffer.bisq_v1.PlaceOfferModel;
 import bisq.core.offer.placeoffer.bisq_v1.PlaceOfferProtocol;
+import bisq.core.provider.mempool.FeeValidationStatus;
 import bisq.core.provider.price.PriceFeedService;
 import bisq.core.support.dispute.arbitration.arbitrator.ArbitratorManager;
 import bisq.core.support.dispute.mediation.mediator.MediatorManager;
@@ -86,9 +92,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
 import javax.annotation.Nullable;
@@ -97,7 +105,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 @Slf4j
-public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMessageListener, PersistedDataHost {
+public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMessageListener, PersistedDataHost, DaoStateListener {
 
     private static final long RETRY_REPUBLISH_DELAY_SEC = 10;
     private static final long REPUBLISH_AGAIN_AT_STARTUP_DELAY_SEC = 30;
@@ -122,12 +130,17 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
     private final RefundAgentManager refundAgentManager;
     private final DaoFacade daoFacade;
     private final FilterManager filterManager;
+    private final BtcFeeReceiverService btcFeeReceiverService;
+    private final DelayedPayoutTxReceiverService delayedPayoutTxReceiverService;
     private final Broadcaster broadcaster;
     private final PersistenceManager<TradableList<OpenOffer>> persistenceManager;
+    private final DaoStateService daoStateService;
     private final Map<String, OpenOffer> offersToBeEdited = new HashMap<>();
     private final TradableList<OpenOffer> openOffers = new TradableList<>();
     private boolean stopped;
     private Timer periodicRepublishOffersTimer, periodicRefreshOffersTimer, retryRepublishOffersTimer;
+    @Setter
+    private Consumer<String> chainNotSyncedHandler;
     @Getter
     private final ObservableList<Tuple2<OpenOffer, String>> invalidOffers = FXCollections.observableArrayList();
 
@@ -155,8 +168,11 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
                             RefundAgentManager refundAgentManager,
                             DaoFacade daoFacade,
                             FilterManager filterManager,
+                            BtcFeeReceiverService btcFeeReceiverService,
+                            DelayedPayoutTxReceiverService delayedPayoutTxReceiverService,
                             Broadcaster broadcaster,
-                            PersistenceManager<TradableList<OpenOffer>> persistenceManager) {
+                            PersistenceManager<TradableList<OpenOffer>> persistenceManager,
+                            DaoStateService daoStateService) {
         this.coreContext = coreContext;
         this.createOfferService = createOfferService;
         this.keyRing = keyRing;
@@ -175,8 +191,11 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
         this.refundAgentManager = refundAgentManager;
         this.daoFacade = daoFacade;
         this.filterManager = filterManager;
+        this.btcFeeReceiverService = btcFeeReceiverService;
+        this.delayedPayoutTxReceiverService = delayedPayoutTxReceiverService;
         this.broadcaster = broadcaster;
         this.persistenceManager = persistenceManager;
+        this.daoStateService = daoStateService;
 
         this.persistenceManager.initialize(openOffers, "OpenOffers", PersistenceManager.Source.PRIVATE);
     }
@@ -191,15 +210,39 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
                 completeHandler);
     }
 
+
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    // DaoStateListener implementation
+    ///////////////////////////////////////////////////////////////////////////////////////////
+
+    @Override
+    public void onParseBlockCompleteAfterBatchProcessing(Block block) {
+        Set<String> invalidOfferIds = invalidOffers.stream().map(e -> e.first.getId()).collect(Collectors.toSet());
+        Set<Tuple2<OpenOffer, String>> exceedingOffers = openOffers.stream()
+                .filter(openOffer -> !invalidOfferIds.contains(openOffer.getId()))
+                .filter(openOffer -> OfferUtil.doesOfferAmountExceedTradeLimit(openOffer.getOffer()))
+                .map(openOffer -> {
+                    String message = "Your offer with ID `" + openOffer.getOffer().getShortId() + "` has become invalid because the max. allowed trade amount has been changed.\n\n" +
+                            "The new trade limit has been activated by DAO voting. See https://github.com/bisq-network/proposals/issues/453 for more details.\n\n" +
+                            "You can request a reimbursement from the Bisq DAO for the lost `maker-fee` at: https://github.com/bisq-network/support/issues.\n" +
+                            "If you have any questions please reach out to the Bisq community at: https://bisq.network/community.";
+                    return new Tuple2<>(openOffer, message);
+                })
+                .collect(Collectors.toSet());
+        invalidOffers.addAll(exceedingOffers);
+    }
+
+
     public void onAllServicesInitialized() {
         p2PService.addDecryptedDirectMessageListener(this);
+        daoStateService.addDaoStateListener(this);
 
         if (p2PService.isBootstrapped()) {
             onBootstrapComplete();
         } else {
             p2PService.addP2PServiceListener(new BootstrapListener() {
                 @Override
-                public void onUpdatedDataReceived() {
+                public void onDataReceived() {
                     onBootstrapComplete();
                 }
             });
@@ -214,7 +257,10 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
     }
 
     private void cleanUpAddressEntries() {
-        Set<String> openOffersIdSet = openOffers.getList().stream().map(OpenOffer::getId).collect(Collectors.toSet());
+        Set<String> openOffersIdSet = openOffers.getList().stream()
+                .map(OpenOffer::getId)
+                .collect(Collectors.toSet());
+        // We reset all AddressEntriesForOpenOffer which do not have a corresponding openOffer
         btcWalletService.getAddressEntriesForOpenOffer().stream()
                 .filter(e -> !openOffersIdSet.contains(e.getOfferId()))
                 .forEach(e -> {
@@ -227,6 +273,7 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
 
     public void shutDown(@Nullable Runnable completeHandler) {
         stopped = true;
+        daoStateService.removeDaoStateListener(this);
         p2PService.getPeerManager().removeListener(this);
         p2PService.removeDecryptedDirectMessageListener(this);
 
@@ -368,11 +415,18 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
     public void placeOffer(Offer offer,
                            double buyerSecurityDeposit,
                            boolean useSavingsWallet,
+                           boolean isSharedMakerFee,
                            long triggerPrice,
                            TransactionResultHandler resultHandler,
                            ErrorMessageHandler errorMessageHandler) {
         checkNotNull(offer.getMakerFee(), "makerFee must not be null");
         checkArgument(!offer.isBsqSwapOffer());
+
+        int numClones = getOpenOffersByMakerFeeTxId(offer.getOfferFeePaymentTxId()).size();
+        if (numClones >= 10) {
+            errorMessageHandler.handleErrorMessage("Cannot create offer because maximum number of 10 cloned offers with shared maker fee is reached.");
+            return;
+        }
 
         Coin reservedFundsForOffer = createOfferService.getReservedFundsForOffer(offer.getDirection(),
                 offer.getAmount(),
@@ -382,6 +436,7 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
         PlaceOfferModel model = new PlaceOfferModel(offer,
                 reservedFundsForOffer,
                 useSavingsWallet,
+                isSharedMakerFee,
                 btcWalletService,
                 tradeWalletService,
                 bsqWalletService,
@@ -389,12 +444,26 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
                 arbitratorManager,
                 tradeStatisticsManager,
                 daoFacade,
+                btcFeeReceiverService,
                 user,
                 filterManager);
         PlaceOfferProtocol placeOfferProtocol = new PlaceOfferProtocol(
                 model,
                 transaction -> {
                     OpenOffer openOffer = new OpenOffer(offer, triggerPrice);
+                    if (isSharedMakerFee) {
+                        if (cannotActivateOffer(offer)) {
+                            openOffer.setState(OpenOffer.State.DEACTIVATED);
+                        } else {
+                            // We did not use the AddToOfferBook task for publishing because we
+                            // do not have created the openOffer during the protocol and we need that to determine if the offer can be activated.
+                            // So in case we have an activated cloned offer we do the publishing here.
+                            model.getOfferBookService().addOffer(model.getOffer(),
+                                    () -> model.setOfferAddedToOfferBook(true),
+                                    errorMessage -> model.getOffer().setErrorMessage("Could not add offer to offerbook.\n" +
+                                            "Please check your network connection and try again."));
+                        }
+                    }
                     addOpenOfferToList(openOffer);
                     if (!stopped) {
                         startPeriodicRepublishOffersTimer();
@@ -438,7 +507,12 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
                                   ResultHandler resultHandler,
                                   ErrorMessageHandler errorMessageHandler) {
         if (offersToBeEdited.containsKey(openOffer.getId())) {
-            errorMessageHandler.handleErrorMessage("You can't activate an offer that is currently edited.");
+            errorMessageHandler.handleErrorMessage(Res.get("offerbook.cannotActivateEditedOffer.warning"));
+            return;
+        }
+
+        if (cannotActivateOffer(openOffer.getOffer())) {
+            errorMessageHandler.handleErrorMessage(Res.get("offerbook.cannotActivate.warning"));
             return;
         }
 
@@ -455,6 +529,7 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
         offerBookService.activateOffer(offer,
                 () -> {
                     openOffer.setState(OpenOffer.State.AVAILABLE);
+                    openOffer.setFeeValidationStatus(FeeValidationStatus.NOT_CHECKED_YET);
                     requestPersistence();
                     log.debug("activateOpenOffer, offerId={}", offer.getId());
                     resultHandler.handleResult();
@@ -562,8 +637,6 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
             } else {
                 resultHandler.handleResult();
             }
-        } else {
-            errorMessageHandler.handleErrorMessage("Editing of offer can't be canceled as it is not edited.");
         }
     }
 
@@ -571,9 +644,20 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
         offer.setState(Offer.State.REMOVED);
         openOffer.setState(OpenOffer.State.CANCELED);
         removeOpenOfferFromList(openOffer);
+
         if (!openOffer.getOffer().isBsqSwapOffer()) {
-            closedTradableManager.add(openOffer);
-            btcWalletService.resetAddressEntriesForOpenOffer(offer.getId());
+            // In case of an offer which has its maker fee shared with other offers, we do not add the openOffer
+            // to history. Only when the last offer with that maker fee txId got removed we add it.
+            // Only canceled offers which have lost maker fees are shown in history.
+            // For that reason we also do not add BSQ offers.
+            if (getOpenOffersByMakerFeeTxId(offer.getOfferFeePaymentTxId()).isEmpty()) {
+                closedTradableManager.add(openOffer);
+
+                // We only reset if there are no other offers with the shared maker fee as otherwise the
+                // address in the addressEntry would become available while it's still RESERVED_FOR_TRADE
+                // for the remaining offers.
+                btcWalletService.resetAddressEntriesForOpenOffer(offer.getId());
+            }
         }
         log.info("onRemoved offerId={}", offer.getId());
         resultHandler.handleResult();
@@ -581,18 +665,55 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
 
     // Close openOffer after deposit published
     public void closeOpenOffer(Offer offer) {
-        getOpenOfferById(offer.getId()).ifPresent(openOffer -> {
-            removeOpenOfferFromList(openOffer);
-            openOffer.setState(OpenOffer.State.CLOSED);
-            offerBookService.removeOffer(openOffer.getOffer().getOfferPayloadBase(),
-                    () -> log.trace("Successful removed offer"),
-                    log::error);
-        });
+        if (offer.isBsqSwapOffer()) {
+            getOpenOfferById(offer.getId()).ifPresent(openOffer -> {
+                removeOpenOfferFromList(openOffer);
+                openOffer.setState(OpenOffer.State.CLOSED);
+                offerBookService.removeOffer(openOffer.getOffer().getOfferPayloadBase(),
+                        () -> log.trace("Successfully removed offer"),
+                        log::error);
+            });
+        } else {
+            getOpenOffersByMakerFeeTxId(offer.getOfferFeePaymentTxId()).forEach(openOffer -> {
+                removeOpenOfferFromList(openOffer);
+
+                if (offer.getId().equals(openOffer.getId())) {
+                    openOffer.setState(OpenOffer.State.CLOSED);
+                } else {
+                    // We use CANCELED for the offers which have shared maker fee but have not been taken for the trade.
+                    openOffer.setState(OpenOffer.State.CANCELED);
+                    // We need to reset now those entries as well
+                    btcWalletService.resetAddressEntriesForOpenOffer(openOffer.getId());
+                }
+                offerBookService.removeOffer(openOffer.getOffer().getOfferPayloadBase(),
+                        () -> log.trace("Successfully removed offer"),
+                        log::error);
+            });
+        }
     }
 
     public void reserveOpenOffer(OpenOffer openOffer) {
         openOffer.setState(OpenOffer.State.RESERVED);
         requestPersistence();
+    }
+
+    public boolean cannotActivateOffer(Offer offer) {
+        return openOffers.stream()
+                .filter(openOffer -> !openOffer.getOffer().isBsqSwapOffer())    // We only handle non-BSQ offers
+                .filter(openOffer -> !openOffer.getId().equals(offer.getId()))  // our own offer gets skipped
+                .filter(openOffer -> !openOffer.isDeactivated())  // we only check with activated offers
+                .anyMatch(openOffer ->
+                        // Offers which share our maker fee will get checked if they have the same payment method
+                        // and currency.
+                        openOffer.getOffer().getOfferFeePaymentTxId() != null &&
+                                openOffer.getOffer().getOfferFeePaymentTxId().equals(offer.getOfferFeePaymentTxId()) &&
+                                openOffer.getOffer().getPaymentMethodId().equalsIgnoreCase(offer.getPaymentMethodId()) &&
+                                openOffer.getOffer().getCounterCurrencyCode().equalsIgnoreCase(offer.getCounterCurrencyCode()) &&
+                                openOffer.getOffer().getBaseCurrencyCode().equalsIgnoreCase(offer.getBaseCurrencyCode()));
+    }
+
+    public boolean hasOfferSharedMakerFee(OpenOffer openOffer) {
+        return getOpenOffersByMakerFeeTxId(openOffer.getOffer().getOfferFeePaymentTxId()).size() > 1;
     }
 
 
@@ -643,6 +764,20 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
             errorMessage = "We got a handleOfferAvailabilityRequest but our chain is not synced.";
             log.info(errorMessage);
             sendAckMessage(request, peer, false, errorMessage);
+            if (chainNotSyncedHandler != null) {
+                chainNotSyncedHandler.accept(Res.get("popup.warning.chainNotSynced"));
+            }
+            return;
+        }
+
+        // Don't allow trade start if DAO is not fully synced
+        if (!daoFacade.isDaoStateReadyAndInSync()) {
+            errorMessage = "We got a handleOfferAvailabilityRequest but our DAO is not synced.";
+            log.info(errorMessage);
+            sendAckMessage(request, peer, false, errorMessage);
+            if (chainNotSyncedHandler != null) {
+                chainNotSyncedHandler.accept(Res.get("popup.warning.daoNeedsResync"));
+            }
             return;
         }
 
@@ -675,10 +810,10 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
                     if (openOffer.getState() == OpenOffer.State.AVAILABLE) {
                         Offer offer = openOffer.getOffer();
                         if (preferences.getIgnoreTradersList().stream().noneMatch(fullAddress -> fullAddress.equals(peer.getFullAddress()))) {
-                            mediatorNodeAddress = DisputeAgentSelection.getLeastUsedMediator(tradeStatisticsManager, mediatorManager).getNodeAddress();
+                            mediatorNodeAddress = DisputeAgentSelection.getRandomMediator(mediatorManager).getNodeAddress();
                             openOffer.setMediatorNodeAddress(mediatorNodeAddress);
 
-                            refundAgentNodeAddress = DisputeAgentSelection.getLeastUsedRefundAgent(tradeStatisticsManager, refundAgentManager).getNodeAddress();
+                            refundAgentNodeAddress = DisputeAgentSelection.getRandomRefundAgent(refundAgentManager).getNodeAddress();
                             openOffer.setRefundAgentNodeAddress(refundAgentNodeAddress);
 
                             try {
@@ -695,11 +830,7 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
                                 availabilityResult = AvailabilityResult.MARKET_PRICE_NOT_AVAILABLE;
                             } catch (Throwable e) {
                                 log.warn("Trade price check failed. " + e.getMessage());
-                                if (coreContext.isApiUser())
-                                    // Give api user something more than 'unknown_failure'.
-                                    availabilityResult = AvailabilityResult.PRICE_CHECK_FAILED;
-                                else
-                                    availabilityResult = AvailabilityResult.UNKNOWN_FAILURE;
+                                availabilityResult = AvailabilityResult.PRICE_CHECK_FAILED;
                             }
                         } else {
                             availabilityResult = AvailabilityResult.USER_IGNORED;
@@ -719,6 +850,20 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
                 errorMessage = Res.get("shared.unconfirmedTransactionsLimitReached");
                 log.warn(errorMessage);
                 availabilityResult = AvailabilityResult.UNCONF_TX_LIMIT_HIT;
+            }
+
+            try {
+                int takersBurningManSelectionHeight = request.getBurningManSelectionHeight();
+                checkArgument(takersBurningManSelectionHeight > 0, "takersBurningManSelectionHeight must not be 0");
+
+                int makersBurningManSelectionHeight = delayedPayoutTxReceiverService.getBurningManSelectionHeight();
+                checkArgument(takersBurningManSelectionHeight == makersBurningManSelectionHeight,
+                        "takersBurningManSelectionHeight does no match makersBurningManSelectionHeight. " +
+                                "takersBurningManSelectionHeight=" + takersBurningManSelectionHeight + "; makersBurningManSelectionHeight=" + makersBurningManSelectionHeight);
+            } catch (Throwable t) {
+                errorMessage = "Message validation failed. Error=" + t + ", Message=" + request;
+                log.warn(errorMessage);
+                availabilityResult = AvailabilityResult.INVALID_SNAPSHOT_HEIGHT;
             }
 
             OfferAvailabilityResponse offerAvailabilityResponse = new OfferAvailabilityResponse(request.offerId,
@@ -778,7 +923,7 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
                 result,
                 errorMessage);
 
-        final NodeAddress takersNodeAddress = sender;
+        NodeAddress takersNodeAddress = sender;
         PubKeyRing takersPubKeyRing = message.getPubKeyRing();
         log.info("Send AckMessage for OfferAvailabilityRequest to peer {} with offerId {} and sourceUid {}",
                 takersNodeAddress, offerId, ackMessage.getSourceUid());
@@ -1104,6 +1249,16 @@ public class OpenOfferManager implements PeerManager.Listener, DecryptedDirectMe
     }
 
     private boolean preventedFromPublishing(OpenOffer openOffer) {
-        return openOffer.isDeactivated() || openOffer.isBsqSwapOfferHasMissingFunds();
+        return openOffer.isDeactivated() ||
+                openOffer.isBsqSwapOfferHasMissingFunds() ||
+                cannotActivateOffer(openOffer.getOffer());
+    }
+
+    private Set<OpenOffer> getOpenOffersByMakerFeeTxId(String makerFeeTxId) {
+        return openOffers.stream()
+                .filter(openOffer -> !openOffer.getOffer().isBsqSwapOffer() &&
+                        makerFeeTxId != null &&
+                        makerFeeTxId.equals(openOffer.getOffer().getOfferFeePaymentTxId()))
+                .collect(Collectors.toSet());
     }
 }

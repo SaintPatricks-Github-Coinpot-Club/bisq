@@ -26,6 +26,8 @@ import bisq.core.trade.protocol.bisq_v1.messages.CounterCurrencyTransferStartedM
 import bisq.core.trade.protocol.bisq_v1.messages.DelayedPayoutTxSignatureResponse;
 import bisq.core.trade.protocol.bisq_v1.messages.InputsForDepositTxResponse;
 import bisq.core.trade.protocol.bisq_v1.tasks.ApplyFilter;
+import bisq.core.trade.protocol.bisq_v1.tasks.CheckIfDaoStateIsInSync;
+import bisq.core.trade.protocol.bisq_v1.tasks.CheckRestrictions;
 import bisq.core.trade.protocol.bisq_v1.tasks.TradeTask;
 import bisq.core.trade.protocol.bisq_v1.tasks.seller.MaybeCreateSubAccount;
 import bisq.core.trade.protocol.bisq_v1.tasks.seller.SellerCreatesDelayedPayoutTx;
@@ -73,8 +75,10 @@ public class SellerAsTakerProtocol extends SellerProtocol implements TakerProtoc
                 .with(TakerEvent.TAKE_OFFER)
                 .from(trade.getTradingPeerNodeAddress()))
                 .setup(tasks(
+                        CheckIfDaoStateIsInSync.class,
                         MaybeCreateSubAccount.class,
                         ApplyFilter.class,
+                        CheckRestrictions.class,
                         getVerifyPeersFeePaymentClass(),
                         CreateTakerFeeTx.class,
                         SellerAsTakerCreatesDepositTxInputs.class,

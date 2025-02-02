@@ -19,6 +19,7 @@ package bisq.core.account.witness;
 
 import bisq.core.account.sign.SignedWitness;
 import bisq.core.account.sign.SignedWitnessService;
+import bisq.core.crypto.LowRSigningKey;
 import bisq.core.filter.FilterManager;
 import bisq.core.locale.CountryUtil;
 import bisq.core.offer.bisq_v1.OfferPayload;
@@ -60,16 +61,16 @@ import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 import static bisq.core.payment.payload.PaymentMethod.getPaymentMethod;
 import static bisq.core.support.dispute.DisputeResult.PayoutSuggestion.UNKNOWN;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -89,7 +90,7 @@ public class AccountAgeWitnessServiceTest {
     private File dir2;
     private File dir3;
 
-    @Before
+    @BeforeEach
     public void setup() throws IOException {
         KeyRing keyRing = mock(KeyRing.class);
         setupService(keyRing);
@@ -120,12 +121,12 @@ public class AccountAgeWitnessServiceTest {
         return dir;
     }
 
-    @After
+    @AfterEach
     public void tearDown() {
         // Do teardown stuff
     }
 
-    @Ignore
+    @Disabled
     @Test
     public void testIsTradeDateAfterReleaseDate() {
         Date ageWitnessReleaseDate = new GregorianCalendar(2017, Calendar.OCTOBER, 23).getTime();
@@ -146,7 +147,7 @@ public class AccountAgeWitnessServiceTest {
         }));
     }
 
-    @Ignore
+    @Disabled
     @Test
     public void testVerifySignatureOfNonce() throws CryptoException {
         byte[] nonce = new byte[]{0x01};
@@ -236,7 +237,7 @@ public class AccountAgeWitnessServiceTest {
         assertEquals(2, items.size());
 
         // Setup a mocked arbitrator key
-        ECKey arbitratorKey = mock(ECKey.class);
+        ECKey arbitratorKey = mock(LowRSigningKey.class);
         when(arbitratorKey.signMessage(any())).thenReturn("1");
         when(arbitratorKey.signMessage(any())).thenReturn("2");
         when(arbitratorKey.getPubKey()).thenReturn("1".getBytes());
@@ -250,14 +251,14 @@ public class AccountAgeWitnessServiceTest {
 
         // Check that both accountAgeWitnesses are signed
         SignedWitness foundBuyerSignedWitness = signedWitnessService.getSignedWitnessSetByOwnerPubKey(
-                buyerPubKeyRing.getSignaturePubKeyBytes()).stream()
+                        buyerPubKeyRing.getSignaturePubKeyBytes()).stream()
                 .findFirst()
                 .orElse(null);
         assert foundBuyerSignedWitness != null;
         assertEquals(Utilities.bytesAsHexString(foundBuyerSignedWitness.getAccountAgeWitnessHash()),
                 Utilities.bytesAsHexString(buyerAccountAgeWitness.getHash()));
         SignedWitness foundSellerSignedWitness = signedWitnessService.getSignedWitnessSetByOwnerPubKey(
-                sellerPubKeyRing.getSignaturePubKeyBytes()).stream()
+                        sellerPubKeyRing.getSignaturePubKeyBytes()).stream()
                 .findFirst()
                 .orElse(null);
         assert foundSellerSignedWitness != null;

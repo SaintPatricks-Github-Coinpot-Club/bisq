@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -51,7 +52,7 @@ public class DefaultSeedNodeRepository implements SeedNodeRepository {
     //TODO add support for localhost addresses
     private static final Pattern pattern = Pattern.compile("^([a-z0-9]+\\.onion:\\d+)");
     private static final String ENDING = ".seednodes";
-    private final Collection<NodeAddress> cache = new HashSet<>();
+    private final Set<NodeAddress> cache = new HashSet<>();
     private final Config config;
 
     @Inject
@@ -70,16 +71,22 @@ public class DefaultSeedNodeRepository implements SeedNodeRepository {
             }
 
             cache.clear();
-            List<NodeAddress> result = getSeedNodeAddressesFromPropertyFile(config.baseCurrencyNetwork.name().toLowerCase(Locale.ENGLISH));
+            List<NodeAddress> result = getSeedNodeAddressesFromPropertyFile(config.getBaseCurrencyNetwork().name().toLowerCase(Locale.ENGLISH));
             cache.addAll(result);
 
-            // let values configured by filter fail more gracefully
-            cache.removeAll(
-                    config.bannedSeedNodes.stream()
-                            .filter(n -> !n.isEmpty())
-                            .map(this::getNodeAddress)
-                            .filter(Objects::nonNull)
-                            .collect(Collectors.toSet()));
+            Set<NodeAddress> filterProvidedSeedNodes = config.filterProvidedSeedNodes.stream()
+                    .filter(n -> !n.isEmpty())
+                    .map(this::getNodeAddress)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            cache.addAll(filterProvidedSeedNodes);
+
+            Set<NodeAddress> bannedSeedNodes = config.bannedSeedNodes.stream()
+                    .filter(n -> !n.isEmpty())
+                    .map(this::getNodeAddress)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            cache.removeAll(bannedSeedNodes);
 
             log.info("Seed nodes: {}", cache);
         } catch (Throwable t) {
@@ -107,7 +114,7 @@ public class DefaultSeedNodeRepository implements SeedNodeRepository {
                     list.add(new NodeAddress(matcher.group(1)));
 
                 // Maybe better include in regex...
-                if (line.startsWith("localhost")) {
+                if (line.startsWith("localhost") || line.startsWith("bisq-seednode-")) {
                     String[] strings = line.split(" \\(@");
                     String node = strings[0];
                     list.add(new NodeAddress(node));

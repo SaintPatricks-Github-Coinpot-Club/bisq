@@ -72,6 +72,7 @@ import bisq.cli.opts.GetPaymentAcctFormOptionParser;
 import bisq.cli.opts.GetTradeOptionParser;
 import bisq.cli.opts.GetTradesOptionParser;
 import bisq.cli.opts.GetTransactionOptionParser;
+import bisq.cli.opts.GetTransactionsOptionParser;
 import bisq.cli.opts.OfferIdOptionParser;
 import bisq.cli.opts.RegisterDisputeAgentOptionParser;
 import bisq.cli.opts.RemoveWalletPasswordOptionParser;
@@ -174,6 +175,14 @@ public class CliMain {
                     }
                     var network = client.getNetwork();
                     out.println(network);
+                    return;
+                }
+                case getdaostatus: {
+                    if (new SimpleMethodOptionParser(args).parse().isForHelp()) {
+                        out.println(client.getMethodHelp(method));
+                        return;
+                    }
+                    out.println(client.getDaoStatus());
                     return;
                 }
                 case getbalance: {
@@ -344,6 +353,16 @@ public class CliMain {
                     }
                     var txFeeRate = client.unsetTxFeeRate();
                     out.println(formatTxFeeRateInfo(txFeeRate));
+                    return;
+                }
+                case gettransactions: {
+                    var opts = new GetTransactionsOptionParser(args).parse();
+                    if (opts.isForHelp()) {
+                        out.println(client.getMethodHelp(method));
+                        return;
+                    }
+                    var txs = client.getTransactions();
+                    new TableBuilder(TRANSACTION_TBL, txs).build().print(out);
                     return;
                 }
                 case gettransaction: {
@@ -563,6 +582,19 @@ public class CliMain {
                     }
                     var tradeId = opts.getTradeId();
                     client.confirmPaymentStarted(tradeId);
+                    out.printf("trade %s payment started message sent%n", tradeId);
+                    return;
+                }
+                case confirmpaymentstartedxmr: {
+                    var opts = new GetTradeOptionParser(args).parse();
+                    if (opts.isForHelp()) {
+                        out.println(client.getMethodHelp(method));
+                        return;
+                    }
+                    var tradeId = opts.getTradeId();
+                    var txId = opts.getTxId();
+                    var txKey = opts.getTxKey();
+                    client.confirmPaymentStartedXmr(tradeId, txId, txKey);
                     out.printf("trade %s payment started message sent%n", tradeId);
                     return;
                 }
@@ -854,6 +886,8 @@ public class CliMain {
             stream.println();
             stream.format(rowFormat, getnetwork.name(), "", "Get BTC network:  mainnet, testnet3, or regtest");
             stream.println();
+            stream.format(rowFormat, getdaostatus.name(), "", "Get DAO synchronized status:  true or false");
+            stream.println();
             stream.format(rowFormat, getbalance.name(), "[--currency-code=<bsq|btc>]", "Get server wallet balances");
             stream.println();
             stream.format(rowFormat, getaddressbalance.name(), "--address=<btc-address>", "Get server wallet address balance");
@@ -881,6 +915,8 @@ public class CliMain {
             stream.format(rowFormat, settxfeerate.name(), "--tx-fee-rate=<sats/byte>", "Set custom tx fee rate in sats/byte");
             stream.println();
             stream.format(rowFormat, unsettxfeerate.name(), "", "Unset custom tx fee rate");
+            stream.println();
+            stream.format(rowFormat, gettransactions.name(), "", "Get transactions");
             stream.println();
             stream.format(rowFormat, gettransaction.name(), "--transaction-id=<transaction-id>", "Get transaction with id");
             stream.println();

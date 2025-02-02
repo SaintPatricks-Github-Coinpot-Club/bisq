@@ -28,6 +28,9 @@ import java.util.Optional;
 
 import ch.qos.logback.classic.Level;
 
+import lombok.Getter;
+import lombok.Setter;
+
 import static com.google.common.base.Preconditions.checkNotNull;
 import static java.lang.String.format;
 import static java.util.stream.Collectors.toList;
@@ -64,8 +67,10 @@ public class Config {
     public static final String MAX_MEMORY = "maxMemory";
     public static final String LOG_LEVEL = "logLevel";
     public static final String BANNED_BTC_NODES = "bannedBtcNodes";
+    private static final String FILTER_PROVIDED_BTC_NODES = "filterProvidedBtcNodes";
     public static final String BANNED_PRICE_RELAY_NODES = "bannedPriceRelayNodes";
     public static final String BANNED_SEED_NODES = "bannedSeedNodes";
+    private static final String FILTER_PROVIDED_SEED_NODES = "filterProvidedSeedNodes";
     public static final String BASE_CURRENCY_NETWORK = "baseCurrencyNetwork";
     public static final String REFERRAL_ID = "referralId";
     public static final String USE_DEV_MODE = "useDevMode";
@@ -88,6 +93,7 @@ public class Config {
     public static final String USE_TOR_FOR_BTC = "useTorForBtc";
     public static final String TORRC_FILE = "torrcFile";
     public static final String TORRC_OPTIONS = "torrcOptions";
+    public static final String TOR_CONTROL_HOST = "torControlHost";
     public static final String TOR_CONTROL_PORT = "torControlPort";
     public static final String TOR_CONTROL_PASSWORD = "torControlPassword";
     public static final String TOR_CONTROL_COOKIE_FILE = "torControlCookieFile";
@@ -129,7 +135,12 @@ public class Config {
     public static final String BYPASS_MEMPOOL_VALIDATION = "bypassMempoolValidation";
     public static final String DAO_NODE_API_URL = "daoNodeApiUrl";
     public static final String DAO_NODE_API_PORT = "daoNodeApiPort";
+    public static final String IS_BM_FULL_NODE = "isBmFullNode";
+    public static final String BM_ORACLE_NODE_PUB_KEY = "bmOracleNodePubKey";
+    public static final String BM_ORACLE_NODE_PRIV_KEY = "bmOracleNodePrivKey";
     public static final String SEED_NODE_REPORTING_SERVER_URL = "seedNodeReportingServerUrl";
+    public static final String USE_TOR_FOR_BTC_MONITOR = "useTorForBtcMonitor";
+    public static final String USE_FULL_MODE_DAO_MONITOR = "useFullModeDaoMonitor";
 
     // Default values for certain options
     public static final int UNSPECIFIED_PORT = -1;
@@ -153,7 +164,8 @@ public class Config {
 
     // Options supported only at the command-line interface (cli)
     public final boolean helpRequested;
-    public final File configFile;
+    @Getter
+    private final File configFile;
 
     // Options supported on cmd line and in the config file
     public final String appName;
@@ -163,9 +175,12 @@ public class Config {
     public final int maxMemory;
     public final String logLevel;
     public final List<String> bannedBtcNodes;
+    public final List<String> filterProvidedBtcNodes;
     public final List<String> bannedPriceRelayNodes;
     public final List<String> bannedSeedNodes;
-    public final BaseCurrencyNetwork baseCurrencyNetwork;
+    public final List<String> filterProvidedSeedNodes;
+    @Getter
+    private final BaseCurrencyNetwork baseCurrencyNetwork;
     public final NetworkParameters networkParameters;
     public final boolean ignoreLocalBtcNode;
     public final String bitcoinRegtestHost;
@@ -184,6 +199,7 @@ public class Config {
     public final String socks5ProxyHttpAddress;
     public final File torrcFile;
     public final String torrcOptions;
+    public final String torControlHost;
     public final int torControlPort;
     public final String torControlPassword;
     public final File torControlCookieFile;
@@ -221,7 +237,13 @@ public class Config {
     public final boolean bypassMempoolValidation;
     public final String daoNodeApiUrl;
     public final int daoNodeApiPort;
+    public final boolean isBmFullNode;
+    public final String bmOracleNodePubKey;
+    public final String bmOracleNodePrivKey;
     public final String seedNodeReportingServerUrl;
+    public final boolean useTorForBtcMonitor;
+    public final boolean useFullModeDaoMonitor;
+    public final boolean useFullModeDaoMonitorSetExplicitly;
 
     // Properties derived from options but not exposed as options themselves
     public final File torDir;
@@ -325,6 +347,12 @@ public class Config {
                         .ofType(String.class)
                         .withValuesSeparatedBy(',')
                         .describedAs("host:port[,...]");
+        ArgumentAcceptingOptionSpec<String> filterProvidedBtcNodesOpt =
+                parser.accepts(FILTER_PROVIDED_BTC_NODES, "List of filter provided Bitcoin nodes")
+                        .withRequiredArg()
+                        .ofType(String.class)
+                        .withValuesSeparatedBy(',')
+                        .describedAs("host:port[,...]");
 
         ArgumentAcceptingOptionSpec<String> bannedPriceRelayNodesOpt =
                 parser.accepts(BANNED_PRICE_RELAY_NODES, "List Bisq price nodes to ban")
@@ -335,6 +363,12 @@ public class Config {
 
         ArgumentAcceptingOptionSpec<String> bannedSeedNodesOpt =
                 parser.accepts(BANNED_SEED_NODES, "List Bisq seed nodes to ban")
+                        .withRequiredArg()
+                        .ofType(String.class)
+                        .withValuesSeparatedBy(',')
+                        .describedAs("host:port[,...]");
+        ArgumentAcceptingOptionSpec<String> filterProvidedSeedNodesOpt =
+                parser.accepts(FILTER_PROVIDED_SEED_NODES, "List of filer provided seed nodes")
                         .withRequiredArg()
                         .ofType(String.class)
                         .withValuesSeparatedBy(',')
@@ -464,6 +498,11 @@ public class Config {
                         .withValuesConvertedBy(RegexMatcher.regex("^([^\\s,]+\\s[^,]+,?\\s*)+$"))
                         .defaultsTo("");
 
+        ArgumentAcceptingOptionSpec<String> torControlHostOpt =
+                parser.accepts(TOR_CONTROL_HOST, "The control hostname of an already running Tor service to be used by Bisq.")
+                        .withRequiredArg()
+                        .defaultsTo("127.0.0.1");
+
         ArgumentAcceptingOptionSpec<Integer> torControlPortOpt =
                 parser.accepts(TOR_CONTROL_PORT,
                                 "The control port of an already running Tor service to be used by Bisq.")
@@ -523,9 +562,11 @@ public class Config {
                         .defaultsTo(50); // Pause in ms to sleep if we get too many messages to send
 
         ArgumentAcceptingOptionSpec<String> btcNodesOpt =
-                parser.accepts(BTC_NODES, "Custom nodes used for BitcoinJ as comma separated IP addresses.")
+                parser.accepts(BTC_NODES, "Override provided Bitcoin nodes as comma separated list e.g. " +
+                                "'rxdkppp3vicnbgqt.onion:8002,mfla72c4igh5ta2t.onion:8002'")
                         .withRequiredArg()
-                        .describedAs("ip[,...]")
+                        .withValuesSeparatedBy(',')
+                        .describedAs("host:port[,...]")
                         .defaultsTo("");
 
         ArgumentAcceptingOptionSpec<Boolean> useTorForBtcOpt =
@@ -680,12 +721,43 @@ public class Config {
                 parser.accepts(DAO_NODE_API_PORT, "Dao node API port")
                         .withRequiredArg()
                         .ofType(Integer.class)
-                        .defaultsTo(8082);
+                        .defaultsTo(8081);
+
+        ArgumentAcceptingOptionSpec<Boolean> isBmFullNode =
+                parser.accepts(IS_BM_FULL_NODE, "Run as Burningman full node")
+                        .withRequiredArg()
+                        .ofType(boolean.class)
+                        .defaultsTo(false);
+
+        ArgumentAcceptingOptionSpec<String> bmOracleNodePubKey =
+                parser.accepts(BM_ORACLE_NODE_PUB_KEY, "Burningman oracle node public key")
+                        .withRequiredArg()
+                        .defaultsTo("");
+
+        ArgumentAcceptingOptionSpec<String> bmOracleNodePrivKey =
+                parser.accepts(BM_ORACLE_NODE_PRIV_KEY, "Burningman oracle node private key")
+                        .withRequiredArg()
+                        .defaultsTo("");
+
         ArgumentAcceptingOptionSpec<String> seedNodeReportingServerUrlOpt =
                 parser.accepts(SEED_NODE_REPORTING_SERVER_URL, "URL of seed node reporting server")
                         .withRequiredArg()
                         .ofType(String.class)
                         .defaultsTo("");
+
+        ArgumentAcceptingOptionSpec<Boolean> useTorForBtcMonitorOpt =
+                parser.accepts(USE_TOR_FOR_BTC_MONITOR, "If set to true BitcoinJ is routed over tor (socks 5 proxy) for Bitcoin monitor.")
+                        .withRequiredArg()
+                        .ofType(Boolean.class)
+                        .defaultsTo(true);
+
+        ArgumentAcceptingOptionSpec<Boolean> useFullModeDaoMonitorOpt =
+                parser.accepts(USE_FULL_MODE_DAO_MONITOR, "If set to true full mode DAO monitor is activated. " +
+                                "By that at each block during parsing the dao state hash is created, " +
+                                "otherwise only after block parsing is complete and on new blocks.")
+                        .withRequiredArg()
+                        .ofType(Boolean.class)
+                        .defaultsTo(false);
 
         try {
             CompositeOptionSet options = new CompositeOptionSet();
@@ -747,14 +819,17 @@ public class Config {
             this.maxMemory = options.valueOf(maxMemoryOpt);
             this.logLevel = options.valueOf(logLevelOpt);
             this.bannedBtcNodes = options.valuesOf(bannedBtcNodesOpt);
+            this.filterProvidedBtcNodes = options.valuesOf(filterProvidedBtcNodesOpt);
             this.bannedPriceRelayNodes = options.valuesOf(bannedPriceRelayNodesOpt);
             this.bannedSeedNodes = options.valuesOf(bannedSeedNodesOpt);
+            this.filterProvidedSeedNodes = options.valuesOf(filterProvidedSeedNodesOpt);
             this.baseCurrencyNetwork = (BaseCurrencyNetwork) options.valueOf(baseCurrencyNetworkOpt);
             this.networkParameters = baseCurrencyNetwork.getParameters();
             this.ignoreLocalBtcNode = options.valueOf(ignoreLocalBtcNodeOpt);
             this.bitcoinRegtestHost = options.valueOf(bitcoinRegtestHostOpt);
             this.torrcFile = options.has(torrcFileOpt) ? options.valueOf(torrcFileOpt).toFile() : null;
             this.torrcOptions = options.valueOf(torrcOptionsOpt);
+            this.torControlHost = options.valueOf(torControlHostOpt);
             this.torControlPort = options.valueOf(torControlPortOpt);
             this.torControlPassword = options.valueOf(torControlPasswordOpt);
             this.torControlCookieFile = options.has(torControlCookieFileOpt) ?
@@ -806,7 +881,13 @@ public class Config {
             this.bypassMempoolValidation = options.valueOf(bypassMempoolValidationOpt);
             this.daoNodeApiUrl = options.valueOf(daoNodeApiUrlOpt);
             this.daoNodeApiPort = options.valueOf(daoNodeApiPortOpt);
+            this.isBmFullNode = options.valueOf(isBmFullNode);
+            this.bmOracleNodePubKey = options.valueOf(bmOracleNodePubKey);
+            this.bmOracleNodePrivKey = options.valueOf(bmOracleNodePrivKey);
             this.seedNodeReportingServerUrl = options.valueOf(seedNodeReportingServerUrlOpt);
+            this.useTorForBtcMonitor = options.valueOf(useTorForBtcMonitorOpt);
+            this.useFullModeDaoMonitor = options.valueOf(useFullModeDaoMonitorOpt);
+            this.useFullModeDaoMonitorSetExplicitly = options.has(useFullModeDaoMonitorOpt);
         } catch (OptionException ex) {
             throw new ConfigException("problem parsing option '%s': %s",
                     ex.options().get(0),

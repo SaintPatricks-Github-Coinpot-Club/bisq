@@ -18,7 +18,9 @@
 package bisq.core.account.sign;
 
 import bisq.core.account.witness.AccountAgeWitness;
+import bisq.core.crypto.LowRSigningKey;
 import bisq.core.filter.FilterManager;
+import bisq.core.offer.OfferRestrictions;
 import bisq.core.support.dispute.arbitration.arbitrator.ArbitratorManager;
 import bisq.core.user.User;
 
@@ -68,7 +70,7 @@ import lombok.extern.slf4j.Slf4j;
 public class SignedWitnessService {
     public static final long SIGNER_AGE_DAYS = 30;
     private static final long SIGNER_AGE = SIGNER_AGE_DAYS * ChronoUnit.DAYS.getDuration().toMillis();
-    public static final Coin MINIMUM_TRADE_AMOUNT_FOR_SIGNING = Coin.parseCoin("0.0025");
+    public static final Coin MINIMUM_TRADE_AMOUNT_FOR_SIGNING = OfferRestrictions.TOLERATED_SMALL_TRADE_AMOUNT.divide(4);
 
     private final KeyRing keyRing;
     private final P2PService p2PService;
@@ -140,7 +142,7 @@ public class SignedWitnessService {
         } else {
             p2PService.addP2PServiceListener(new BootstrapListener() {
                 @Override
-                public void onUpdatedDataReceived() {
+                public void onDataReceived() {
                     onBootstrapComplete();
                 }
             });
@@ -280,7 +282,7 @@ public class SignedWitnessService {
         }
 
         String accountAgeWitnessHashAsHex = Utilities.encodeToHex(accountAgeWitness.getHash());
-        String signatureBase64 = key.signMessage(accountAgeWitnessHashAsHex);
+        String signatureBase64 = LowRSigningKey.from(key).signMessage(accountAgeWitnessHashAsHex);
         SignedWitness signedWitness = new SignedWitness(SignedWitness.VerificationMethod.ARBITRATOR,
                 accountAgeWitness.getHash(),
                 signatureBase64.getBytes(Charsets.UTF_8),
@@ -289,7 +291,7 @@ public class SignedWitnessService {
                 time,
                 tradeAmount.value);
         publishSignedWitness(signedWitness);
-        log.info("Arbitrator signed witness {}", signedWitness.toString());
+        log.info("Arbitrator signed witness {}", signedWitness);
         return "";
     }
 
@@ -322,7 +324,7 @@ public class SignedWitnessService {
                 new Date().getTime(),
                 tradeAmount.value);
         publishSignedWitness(signedWitness);
-        log.info("Trader signed witness {}", signedWitness.toString());
+        log.info("Trader signed witness {}", signedWitness);
         return Optional.of(signedWitness);
     }
 
@@ -537,7 +539,7 @@ public class SignedWitnessService {
 
     private void publishSignedWitness(SignedWitness signedWitness) {
         if (!signedWitnessMap.containsKey(signedWitness.getHashAsByteArray())) {
-            log.info("broadcast signed witness {}", signedWitness.toString());
+            log.info("broadcast signed witness {}", signedWitness);
             // We set reBroadcast to true to achieve better resilience.
             p2PService.addPersistableNetworkPayload(signedWitness, true);
             addToMap(signedWitness);

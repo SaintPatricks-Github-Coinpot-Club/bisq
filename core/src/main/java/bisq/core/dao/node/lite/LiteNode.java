@@ -87,6 +87,7 @@ public class LiteNode extends BsqNode {
         blockDownloadListener = (observable, oldValue, newValue) -> {
             if ((double) newValue == 1) {
                 setupWalletBestBlockListener();
+                maybeStartRequestingBlocks();
             }
         };
     }
@@ -176,8 +177,13 @@ public class LiteNode extends BsqNode {
             }
         });
 
-        if (!parseBlockchainComplete)
+        maybeStartRequestingBlocks();
+    }
+
+    private void maybeStartRequestingBlocks() {
+        if (walletsSetup.isDownloadComplete() && p2pNetworkReady && !parseBlockchainComplete) {
             startParseBlocks();
+        }
     }
 
     // First we request the blocks from a full node
@@ -192,7 +198,8 @@ public class LiteNode extends BsqNode {
             return;
         }
 
-        // If we request blocks we increment the ConnectionState counter.
+        // If we request blocks we increment the ConnectionState counter so that the connection does not get reset from
+        // INITIAL_DATA_EXCHANGE to PEER and therefore lower priority for getting closed
         ConnectionState.incrementExpectedInitialDataResponses();
 
         if (chainHeight == daoStateService.getGenesisBlockHeight()) {
@@ -229,6 +236,11 @@ public class LiteNode extends BsqNode {
             return;
         }
 
+        if (walletsSetup.isDownloadComplete() && chainTipHeight < bsqWalletService.getBestChainHeight()) {
+            // We need to request more blocks and increment the ConnectionState counter so that the connection does not get reset from
+            // INITIAL_DATA_EXCHANGE to PEER and therefore lower priority for getting closed
+            ConnectionState.incrementExpectedInitialDataResponses();
+        }
         runDelayedBatchProcessing(new ArrayList<>(blockList),
                 () -> {
                     double duration = System.currentTimeMillis() - ts;
@@ -239,8 +251,12 @@ public class LiteNode extends BsqNode {
                     // We only request again if wallet is synced, otherwise we would get repeated calls we want to avoid.
                     // We deal with that case at the setupWalletBestBlockListener method above.
                     if (walletsSetup.isDownloadComplete() && daoStateService.getChainHeight() < bsqWalletService.getBestChainHeight()) {
+                        log.info("We have completed batch processing of {} blocks but we have still {} missing blocks and request again.",
+                                blockList.size(), bsqWalletService.getBestChainHeight() - daoStateService.getChainHeight());
+
                         liteNodeNetworkService.requestBlocks(daoStateService.getChainHeight() + 1);
                     } else {
+                        log.info("We have completed batch processing of {} blocks and we have reached the chain tip of the wallet.", blockList.size());
                         onParsingComplete.run();
                         onParseBlockChainComplete();
                     }
@@ -248,6 +264,9 @@ public class LiteNode extends BsqNode {
     }
 
     private void runDelayedBatchProcessing(List<RawBlock> blocks, Runnable resultHandler) {
+        if (shutdownInProgress) {
+            return;
+        }
         UserThread.execute(() -> {
             if (blocks.isEmpty()) {
                 resultHandler.run();
@@ -259,7 +278,7 @@ public class LiteNode extends BsqNode {
                 doParseBlock(block);
                 runDelayedBatchProcessing(blocks, resultHandler);
             } catch (RequiredReorgFromSnapshotException e) {
-                log.warn("Interrupt batch processing because if a blockchain reorg. {}", e.toString());
+                log.warn("doParseBlock failed at runDelayedBatchProcessing because of a blockchain reorg. {}", e.toString());
             }
         });
     }
@@ -277,7 +296,8 @@ public class LiteNode extends BsqNode {
 
         try {
             doParseBlock(block);
-        } catch (RequiredReorgFromSnapshotException ignore) {
+        } catch (RequiredReorgFromSnapshotException e) {
+            log.warn("doParseBlock failed at onNewBlockReceived because of a blockchain reorg. {}", e.toString());
         }
 
         maybeExportToJson();

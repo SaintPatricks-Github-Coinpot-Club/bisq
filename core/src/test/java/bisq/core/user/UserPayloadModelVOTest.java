@@ -26,18 +26,19 @@ import bisq.core.proto.CoreProtoResolver;
 import com.google.common.collect.Lists;
 
 import java.util.HashSet;
+import java.util.UUID;
 
-import org.junit.Ignore;
+import org.junit.jupiter.api.Disabled;
 
 public class UserPayloadModelVOTest {
-    @Ignore("TODO InvalidKeySpecException at bisq.common.crypto.Sig.getPublicKeyFromBytes(Sig.java:135)")
+    @Disabled("TODO InvalidKeySpecException at bisq.common.crypto.Sig.getPublicKeyFromBytes(Sig.java:135)")
     public void testRoundtrip() {
         UserPayload vo = new UserPayload();
         vo.setAccountId("accountId");
         UserPayload newVo = UserPayload.fromProto(vo.toProtoMessage().getUserPayload(), new CoreProtoResolver());
     }
 
-    @Ignore("TODO InvalidKeySpecException at bisq.common.crypto.Sig.getPublicKeyFromBytes(Sig.java:135)")
+    @Disabled("TODO InvalidKeySpecException at bisq.common.crypto.Sig.getPublicKeyFromBytes(Sig.java:135)")
     public void testRoundtripFull() {
         UserPayload vo = new UserPayload();
         vo.setAccountId("accountId");
@@ -76,7 +77,11 @@ public class UserPayloadModelVOTest {
                 0,
                 0,
                 0,
-                0));
+                0,
+                Lists.newArrayList(),
+                Lists.newArrayList(),
+                Lists.newArrayList(),
+                UUID.randomUUID().toString()));
 
         vo.setRegisteredArbitrator(ArbitratorTest.getArbitratorMock());
         vo.setRegisteredMediator(MediatorTest.getMediatorMock());

@@ -172,7 +172,7 @@ public class WalletsSetup {
         this.socks5DiscoverMode = evaluateMode(socks5DiscoverModeString);
         this.walletDir = walletDir;
 
-        btcWalletFileName = "bisq_" + config.baseCurrencyNetwork.getCurrencyCode() + ".wallet";
+        btcWalletFileName = "bisq_" + config.getBaseCurrencyNetwork().getCurrencyCode() + ".wallet";
         params = Config.baseCurrencyNetworkParameters();
         PeerGroup.setIgnoreHttpSeeds(true);
     }
@@ -396,8 +396,7 @@ public class WalletsSetup {
     }
 
     private void configPeerNodes(@Nullable Socks5Proxy proxy) {
-        BtcNodesSetupPreferences btcNodesSetupPreferences = new BtcNodesSetupPreferences(preferences,
-                numConnectionsForBtc);
+        BtcNodesSetupPreferences btcNodesSetupPreferences = new BtcNodesSetupPreferences(preferences, numConnectionsForBtc, config);
 
         List<BtcNode> nodes = btcNodesSetupPreferences.selectPreferredNodes(btcNodes);
         int minBroadcastConnections = btcNodesSetupPreferences.calculateMinBroadcastConnections(nodes);

@@ -63,9 +63,6 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionHandler;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -86,23 +83,24 @@ import static com.google.common.base.Preconditions.checkNotNull;
 @Slf4j
 public class Utilities {
 
-    public static ExecutorService getSingleThreadExecutor(String name) {
-        final ThreadFactory threadFactory = new ThreadFactoryBuilder()
-                .setNameFormat(name)
-                .setDaemon(true)
-                .build();
-        return Executors.newSingleThreadExecutor(threadFactory);
-    }
-
-    public static ListeningExecutorService getSingleThreadListeningExecutor(String name) {
-        return MoreExecutors.listeningDecorator(getSingleThreadExecutor(name));
+    public static ExecutorService getFixedThreadPoolExecutor(int nThreads,
+                                                             ThreadFactory threadFactory) {
+        return Executors.newFixedThreadPool(nThreads, threadFactory);
     }
 
     public static ListeningExecutorService getListeningExecutorService(String name,
                                                                        int corePoolSize,
                                                                        int maximumPoolSize,
                                                                        long keepAliveTimeInSec) {
-        return MoreExecutors.listeningDecorator(getThreadPoolExecutor(name, corePoolSize, maximumPoolSize, keepAliveTimeInSec));
+        return getListeningExecutorService(name, corePoolSize, maximumPoolSize, maximumPoolSize, keepAliveTimeInSec);
+    }
+
+    public static ListeningExecutorService getListeningExecutorService(String name,
+                                                                       int corePoolSize,
+                                                                       int maximumPoolSize,
+                                                                       int queueCapacity,
+                                                                       long keepAliveTimeInSec) {
+        return MoreExecutors.listeningDecorator(getThreadPoolExecutor(name, corePoolSize, maximumPoolSize, queueCapacity, keepAliveTimeInSec));
     }
 
     public static ListeningExecutorService getListeningExecutorService(String name,
@@ -117,8 +115,17 @@ public class Utilities {
                                                            int corePoolSize,
                                                            int maximumPoolSize,
                                                            long keepAliveTimeInSec) {
+        return getThreadPoolExecutor(name, corePoolSize, maximumPoolSize, maximumPoolSize, keepAliveTimeInSec);
+    }
+
+
+    public static ThreadPoolExecutor getThreadPoolExecutor(String name,
+                                                           int corePoolSize,
+                                                           int maximumPoolSize,
+                                                           int queueCapacity,
+                                                           long keepAliveTimeInSec) {
         return getThreadPoolExecutor(name, corePoolSize, maximumPoolSize, keepAliveTimeInSec,
-                new ArrayBlockingQueue<>(maximumPoolSize));
+                new ArrayBlockingQueue<>(queueCapacity));
     }
 
     private static ThreadPoolExecutor getThreadPoolExecutor(String name,
@@ -126,58 +133,19 @@ public class Utilities {
                                                             int maximumPoolSize,
                                                             long keepAliveTimeInSec,
                                                             BlockingQueue<Runnable> workQueue) {
-        final ThreadFactory threadFactory = new ThreadFactoryBuilder()
-                .setNameFormat(name)
+        ThreadFactory threadFactory = new ThreadFactoryBuilder()
+                .setNameFormat(name + "-%d")
                 .setDaemon(true)
                 .build();
         ThreadPoolExecutor executor = new ThreadPoolExecutor(corePoolSize, maximumPoolSize, keepAliveTimeInSec,
                 TimeUnit.SECONDS, workQueue, threadFactory);
         executor.allowCoreThreadTimeOut(true);
-        executor.setRejectedExecutionHandler((r, e) -> log.debug("RejectedExecutionHandler called"));
         return executor;
     }
 
-    public static ExecutorService newCachedThreadPool(int maximumPoolSize,
-                                                      long keepAliveTime,
-                                                      TimeUnit timeUnit,
-                                                      RejectedExecutionHandler rejectedExecutionHandler) {
-        return new ThreadPoolExecutor(0,
-                maximumPoolSize,
-                keepAliveTime,
-                timeUnit,
-                new SynchronousQueue<>(),
-                rejectedExecutionHandler);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    public static ScheduledThreadPoolExecutor getScheduledThreadPoolExecutor(String name,
-                                                                             int corePoolSize,
-                                                                             int maximumPoolSize,
-                                                                             long keepAliveTimeInSec) {
-        final ThreadFactory threadFactory = new ThreadFactoryBuilder()
-                .setNameFormat(name)
-                .setDaemon(true)
-                .setPriority(Thread.MIN_PRIORITY)
-                .build();
-        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(corePoolSize, threadFactory);
-        executor.setKeepAliveTime(keepAliveTimeInSec, TimeUnit.SECONDS);
-        executor.allowCoreThreadTimeOut(true);
-        executor.setMaximumPoolSize(maximumPoolSize);
-        executor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
-        executor.setRejectedExecutionHandler((r, e) -> log.debug("RejectedExecutionHandler called"));
-        return executor;
-    }
-
-    // TODO: Can some/all of the uses of this be replaced by guava MoreExecutors.shutdownAndAwaitTermination(..)?
-    public static void shutdownAndAwaitTermination(ExecutorService executor, long timeout, TimeUnit unit) {
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(timeout, unit)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-        }
+    public static boolean shutdownAndAwaitTermination(ExecutorService executor, long timeout, TimeUnit unit) {
+        //noinspection UnstableApiUsage
+        return MoreExecutors.shutdownAndAwaitTermination(executor, timeout, unit);
     }
 
     public static <V> FutureCallback<V> failureCallback(Consumer<Throwable> errorHandler) {
@@ -517,7 +485,7 @@ public class Utilities {
     @SuppressWarnings("SameParameterValue")
     public static String getShortId(String id, String sep) {
         String[] chunks = id.split(sep);
-        if (chunks.length > 0)
+        if (chunks.length > 1 && chunks[0].length() <= 8)
             return chunks[0];
         else
             return id.substring(0, Math.min(8, id.length()));

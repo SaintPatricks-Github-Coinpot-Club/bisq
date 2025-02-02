@@ -24,12 +24,10 @@ import bisq.desktop.components.BisqScrollPane;
 import bisq.desktop.components.BisqTextArea;
 import bisq.desktop.components.InfoAutoTooltipLabel;
 import bisq.desktop.components.indicator.TxConfidenceIndicator;
+import bisq.desktop.components.paymentmethods.ArsBlueRatePopup;
 import bisq.desktop.main.MainView;
 import bisq.desktop.main.account.AccountView;
 import bisq.desktop.main.account.content.fiataccounts.FiatAccountsView;
-import bisq.desktop.main.dao.DaoView;
-import bisq.desktop.main.dao.monitor.MonitorView;
-import bisq.desktop.main.dao.monitor.daostate.DaoStateMonitorView;
 import bisq.desktop.main.overlays.popups.Popup;
 
 import bisq.core.account.witness.AccountAgeWitness;
@@ -43,6 +41,7 @@ import bisq.core.locale.Res;
 import bisq.core.locale.TradeCurrency;
 import bisq.core.monetary.Price;
 import bisq.core.monetary.Volume;
+import bisq.core.offer.OfferRestrictions;
 import bisq.core.payment.PaymentAccount;
 import bisq.core.payment.PaymentAccountList;
 import bisq.core.payment.payload.PaymentMethod;
@@ -746,20 +745,36 @@ public class GUIUtil {
         return t.cast(parent);
     }
 
-    public static void showTakeOfferFromUnsignedAccountWarning() {
-        String key = "confirmTakeOfferFromUnsignedAccount";
-        new Popup().warning(Res.get("payment.takeOfferFromUnsignedAccount.warning"))
+    public static void showMaximizedToProtectPrivacyMessage(Runnable runnable) {
+        String msg = Res.get("shared.maximizedToProtectPrivacy");
+        String id = "shared.maximizedToProtectPrivacy";
+        if (preferences.showAgain(id)) {
+            new Popup().information(msg)
+                    .onClose(runnable)
+                    .useIUnderstandButton()
+                    .show();
+            DontShowAgainLookup.dontShowAgain(id, true);
+        } else {
+            runnable.run();
+        }
+    }
+
+    public static void showUnsignedAccountWarningForSellerAsTaker() {
+        String key = "unsignedAccountWarningForSellerAsTaker";
+        String amount = OfferRestrictions.TOLERATED_SMALL_TRADE_AMOUNT.toFriendlyString();
+        new Popup().warning(Res.get("payment.unsignedAccountWarningForSellerAsTaker.warning", amount))
                 .width(900)
-                .closeButtonText(Res.get("shared.iConfirm"))
+                .closeButtonText(Res.get("shared.iUnderstand"))
                 .dontShowAgainId(key)
                 .show();
     }
 
-    public static void showMakeOfferToUnsignedAccountWarning() {
-        String key = "confirmMakeOfferToUnsignedAccount";
-        new Popup().warning(Res.get("payment.makeOfferToUnsignedAccount.warning"))
+    public static void showUnsignedAccountWarningForSellerAsMaker() {
+        String key = "unsignedAccountWarningForSellerAsMaker";
+        String amount = OfferRestrictions.TOLERATED_SMALL_TRADE_AMOUNT.toFriendlyString();
+        new Popup().warning(Res.get("payment.unsignedAccountWarningForSellerAsMaker.warning", amount, amount))
                 .width(900)
-                .closeButtonText(Res.get("shared.iConfirm"))
+                .closeButtonText(Res.get("shared.iUnderstand"))
                 .dontShowAgainId(key)
                 .show();
     }
@@ -806,16 +821,20 @@ public class GUIUtil {
         return false;
     }
 
-    public static void showDaoNeedsResyncPopup(Navigation navigation) {
-        String key = "showDaoNeedsResyncPopup";
-        if (DontShowAgainLookup.showAgain(key)) {
-            UserThread.runAfter(() -> new Popup().warning(Res.get("popup.warning.daoNeedsResync"))
+    public static void maybeAskAboutStreamliningOrderFunding(Runnable actionHandlerYes, Runnable actionHandlerNo) {
+        String key = "ask_always_use_bisq_wallet";
+        if (!preferences.isUseBisqWalletFunding() && DontShowAgainLookup.showAgain(key)) {
+            // user clicks on "Fund from Bisq wallet",
+            // ask user if they want to in the future always fund from Bisq wallet
+            new Popup().instruction(Res.get("shared.question.useBisqWalletForFunding"))
+                    .actionButtonText(Res.get("shared.yes"))
+                    .onAction(actionHandlerYes)
+                    .closeButtonText(Res.get("shared.no"))
+                    .onClose(actionHandlerNo)
                     .dontShowAgainId(key)
-                    .actionButtonTextWithGoTo("navigation.dao.networkMonitor")
-                    .onAction(() -> {
-                        navigation.navigateTo(MainView.class, DaoView.class, MonitorView.class, DaoStateMonitorView.class);
-                    })
-                    .show(), 5, TimeUnit.SECONDS);
+                    .show();
+        } else {
+            actionHandlerNo.run();
         }
     }
 
@@ -886,7 +905,7 @@ public class GUIUtil {
         UserThread.execute(node::requestFocus);
     }
 
-    public static void reSyncSPVChain(Preferences preferences) {
+    public static void reSyncSPVChain() {
         try {
             new Popup().information(Res.get("settings.net.reSyncSPVSuccess"))
                     .useShutDownButton()
@@ -1088,8 +1107,14 @@ public class GUIUtil {
         });
         currencyComboBox.setDisable(true);
 
-        currencyComboBox.setOnAction(e ->
-                onTradeCurrencySelectedHandler.accept(currencyComboBox.getSelectionModel().getSelectedItem()));
+        currencyComboBox.setOnAction(e -> {
+            TradeCurrency selectedCurrency = currencyComboBox.getSelectionModel().getSelectedItem();
+            onTradeCurrencySelectedHandler.accept(selectedCurrency);
+
+            if (ArsBlueRatePopup.isTradeCurrencyArgentinePesos(selectedCurrency)) {
+                ArsBlueRatePopup.show();
+            }
+        });
 
         return new Tuple2<>(currencyComboBox, gridRow);
     }

@@ -31,6 +31,7 @@ import bisq.desktop.components.InfoAutoTooltipLabel;
 import bisq.desktop.components.PeerInfoIconMap;
 import bisq.desktop.components.PeerInfoIconTrading;
 import bisq.desktop.components.TitledGroupBg;
+import bisq.desktop.components.paymentmethods.ArsBlueRatePopup;
 import bisq.desktop.main.MainView;
 import bisq.desktop.main.account.AccountView;
 import bisq.desktop.main.account.content.altcoinaccounts.AltCoinAccountsView;
@@ -363,12 +364,17 @@ abstract public class OfferBookView<R extends GridPane, M extends OfferBookViewM
         currencyComboBox.setOnChangeConfirmed(e -> {
             if (currencyComboBox.getEditor().getText().isEmpty())
                 currencyComboBox.getSelectionModel().select(SHOW_ALL);
-            model.onSetTradeCurrency(currencyComboBox.getSelectionModel().getSelectedItem());
+            TradeCurrency selectedCurrency = currencyComboBox.getSelectionModel().getSelectedItem();
+            model.onSetTradeCurrency(selectedCurrency);
             paymentMethodComboBox.setAutocompleteItems(model.getPaymentMethods());
             model.updateSelectedPaymentMethod();
             updatePaymentMethodComboBoxEditor();
             model.onSetPaymentMethod(paymentMethodComboBox.getSelectionModel().getSelectedItem());
             updateCreateOfferButton();
+
+            if (ArsBlueRatePopup.isTradeCurrencyArgentinePesos(selectedCurrency)) {
+                ArsBlueRatePopup.showMaybe();
+            }
         });
         updateCurrencyComboBoxFromModel();
 
@@ -723,11 +729,11 @@ abstract public class OfferBookView<R extends GridPane, M extends OfferBookViewM
 
     private void onRemoveOpenOffer(Offer offer) {
         if (model.isBootstrappedOrShowPopup()) {
-            String key = "RemoveOfferWarning";
+            String key = (offer.isBsqSwapOffer() ? "RemoveBsqSwapWarning" : "RemoveOfferWarning");
             if (DontShowAgainLookup.showAgain(key)) {
-                String message = offer.getMakerFee().isPositive() ?
-                        Res.get("popup.warning.removeOffer", model.getMakerFeeAsString(offer)) :
-                        Res.get("popup.warning.removeNoFeeOffer");
+                String message = offer.isBsqSwapOffer() ?
+                        Res.get("popup.warning.removeNoFeeOffer") :
+                        Res.get("popup.warning.removeOffer", model.getMakerFeeAsString(offer));
                 new Popup().warning(message)
                         .actionButtonText(Res.get("shared.removeOffer"))
                         .onAction(() -> doRemoveOffer(offer))
@@ -1169,13 +1175,18 @@ abstract public class OfferBookView<R extends GridPane, M extends OfferBookViewM
                                         button.setStyle(CssTheme.isDarkTheme() ? "-fx-text-fill: white" : "-fx-text-fill: #444444");
                                         button.setOnAction(e -> onRemoveOpenOffer(offer));
 
-                                        iconView2.setId("image-edit");
-                                        button2.updateText(Res.get("shared.edit"));
-                                        button2.setId(null);
-                                        button2.setStyle(CssTheme.isDarkTheme() ? "-fx-text-fill: white" : "-fx-text-fill: #444444");
-                                        button2.setOnAction(e -> onEditOpenOffer(offer));
-                                        button2.setManaged(true);
-                                        button2.setVisible(true);
+                                        if (offer.isBsqSwapOffer()) {
+                                            button2.setManaged(false);
+                                            button2.setVisible(false);
+                                        } else {
+                                            iconView2.setId("image-edit");
+                                            button2.updateText(Res.get("shared.edit"));
+                                            button2.setId(null);
+                                            button2.setStyle(CssTheme.isDarkTheme() ? "-fx-text-fill: white" : "-fx-text-fill: #444444");
+                                            button2.setOnAction(e -> onEditOpenOffer(offer));
+                                            button2.setManaged(true);
+                                            button2.setVisible(true);
+                                        }
                                     } else {
                                         boolean isSellOffer = OfferViewUtil.isShownAsSellOffer(offer);
                                         iconView.setId(isSellOffer ? "image-buy-white" : "image-sell-white");

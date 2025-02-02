@@ -122,7 +122,7 @@ public class OpenBsqSwapOfferService {
         };
         bootstrapListener = new BootstrapListener() {
             @Override
-            public void onUpdatedDataReceived() {
+            public void onDataReceived() {
                 onP2PServiceReady();
                 p2PService.removeP2PServiceListener(bootstrapListener);
             }
@@ -367,7 +367,7 @@ public class OpenBsqSwapOfferService {
 
                         checkArgument(!openOffer.isDeactivated(),
                                 "We must not get called at redoProofOrWorkAndRepublish if offer was deactivated");
-                        OpenOffer newOpenOffer = new OpenOffer(newOffer, OpenOffer.State.AVAILABLE);
+                        OpenOffer newOpenOffer = new OpenOffer(newOffer);
                         if (!newOpenOffer.isDeactivated()) {
                             openOfferManager.maybeRepublishOffer(newOpenOffer);
                         }

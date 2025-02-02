@@ -19,7 +19,7 @@ package bisq.network.p2p;
 
 import bisq.network.p2p.network.BridgeAddressProvider;
 import bisq.network.p2p.network.LocalhostNetworkNode;
-import bisq.network.p2p.network.NetworkFilter;
+import bisq.network.p2p.network.BanFilter;
 import bisq.network.p2p.network.NetworkNode;
 import bisq.network.p2p.network.NewTor;
 import bisq.network.p2p.network.RunningTor;
@@ -44,29 +44,32 @@ public class NetworkNodeProvider implements Provider<NetworkNode> {
     @Inject
     public NetworkNodeProvider(NetworkProtoResolver networkProtoResolver,
                                BridgeAddressProvider bridgeAddressProvider,
-                               @Nullable NetworkFilter networkFilter,
+                               @Nullable BanFilter banFilter,
+                               @Named(Config.MAX_CONNECTIONS) int maxConnections,
                                @Named(Config.USE_LOCALHOST_FOR_P2P) boolean useLocalhostForP2P,
                                @Named(Config.NODE_PORT) int port,
                                @Named(Config.TOR_DIR) File torDir,
                                @Nullable @Named(Config.TORRC_FILE) File torrcFile,
                                @Named(Config.TORRC_OPTIONS) String torrcOptions,
+                               @Named(Config.TOR_CONTROL_HOST) String controlHost,
                                @Named(Config.TOR_CONTROL_PORT) int controlPort,
                                @Named(Config.TOR_CONTROL_PASSWORD) String password,
                                @Nullable @Named(Config.TOR_CONTROL_COOKIE_FILE) File cookieFile,
                                @Named(Config.TOR_STREAM_ISOLATION) boolean streamIsolation,
                                @Named(Config.TOR_CONTROL_USE_SAFE_COOKIE_AUTH) boolean useSafeCookieAuthentication) {
         if (useLocalhostForP2P) {
-            networkNode = new LocalhostNetworkNode(port, networkProtoResolver, networkFilter);
+            networkNode = new LocalhostNetworkNode(port, networkProtoResolver, banFilter, maxConnections);
         } else {
             TorMode torMode = getTorMode(bridgeAddressProvider,
                     torDir,
                     torrcFile,
                     torrcOptions,
+                    controlHost,
                     controlPort,
                     password,
                     cookieFile,
                     useSafeCookieAuthentication);
-            networkNode = new TorNetworkNode(port, networkProtoResolver, streamIsolation, torMode, networkFilter);
+            networkNode = new TorNetworkNode(port, networkProtoResolver, streamIsolation, torMode, banFilter, maxConnections, controlHost);
         }
     }
 
@@ -74,12 +77,13 @@ public class NetworkNodeProvider implements Provider<NetworkNode> {
                                File torDir,
                                @Nullable File torrcFile,
                                String torrcOptions,
+                               String controlHost,
                                int controlPort,
                                String password,
                                @Nullable File cookieFile,
                                boolean useSafeCookieAuthentication) {
         return controlPort != Config.UNSPECIFIED_PORT ?
-                new RunningTor(torDir, controlPort, password, cookieFile, useSafeCookieAuthentication) :
+                new RunningTor(torDir, controlHost, controlPort, password, cookieFile, useSafeCookieAuthentication) :
                 new NewTor(torDir, torrcFile, torrcOptions, bridgeAddressProvider);
     }
 

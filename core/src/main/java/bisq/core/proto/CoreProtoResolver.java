@@ -44,6 +44,7 @@ import bisq.core.payment.payload.ImpsAccountPayload;
 import bisq.core.payment.payload.InstantCryptoCurrencyPayload;
 import bisq.core.payment.payload.InteracETransferAccountPayload;
 import bisq.core.payment.payload.JapanBankAccountPayload;
+import bisq.core.payment.payload.MercadoPagoAccountPayload;
 import bisq.core.payment.payload.MoneseAccountPayload;
 import bisq.core.payment.payload.MoneyBeamAccountPayload;
 import bisq.core.payment.payload.MoneyGramAccountPayload;
@@ -63,6 +64,7 @@ import bisq.core.payment.payload.RevolutAccountPayload;
 import bisq.core.payment.payload.RtgsAccountPayload;
 import bisq.core.payment.payload.SameBankAccountPayload;
 import bisq.core.payment.payload.SatispayAccountPayload;
+import bisq.core.payment.payload.SbpAccountPayload;
 import bisq.core.payment.payload.SepaAccountPayload;
 import bisq.core.payment.payload.SepaInstantAccountPayload;
 import bisq.core.payment.payload.SpecificBanksAccountPayload;
@@ -158,6 +160,8 @@ public class CoreProtoResolver implements ProtoResolver {
                             return StrikeAccountPayload.fromProto(proto);
                         case TRANSFERWISE_USD_ACCOUNT_PAYLOAD:
                             return TransferwiseUsdAccountPayload.fromProto(proto);
+                        case MERCADO_PAGO_ACCOUNT_PAYLOAD:
+                            return MercadoPagoAccountPayload.fromProto(proto);
                         case IFSC_BASED_ACCOUNT_PAYLOAD:
                             final protobuf.IfscBasedAccountPayload.MessageCase messageCaseIfsc = proto.getCountryBasedPaymentAccountPayload().getIfscBasedAccountPayload().getMessageCase();
                             switch (messageCaseIfsc) {
@@ -233,6 +237,8 @@ public class CoreProtoResolver implements ProtoResolver {
                     return SwiftAccountPayload.fromProto(proto);
                 case BSQ_SWAP_ACCOUNT_PAYLOAD:
                     return BsqSwapAccountPayload.fromProto(proto);
+                case SBP_ACCOUNT_PAYLOAD:
+                    return SbpAccountPayload.fromProto(proto);
 
                 // Cannot be deleted as it would break old trade history entries
                 case O_K_PAY_ACCOUNT_PAYLOAD:

@@ -26,10 +26,8 @@ import bisq.desktop.main.overlays.popups.Popup;
 
 import bisq.core.alert.Alert;
 import bisq.core.locale.Res;
-import bisq.core.user.CookieKey;
 import bisq.core.user.User;
 
-import bisq.common.UserThread;
 import bisq.common.config.Config;
 import bisq.common.util.Utilities;
 
@@ -53,18 +51,12 @@ import javafx.geometry.Pos;
 
 import javafx.beans.value.ChangeListener;
 
-import java.nio.file.Path;
-import java.nio.file.Paths;
-
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
-import java.io.PrintWriter;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.Scanner;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -234,11 +226,6 @@ public class DisplayUpdateDownloadWindow extends Overlay<DisplayUpdateDownloadWi
                             log.debug("Download completed successfully.");
                             downloadedFilesLabel.getStyleClass().add("success-text");
 
-                            downloadTask.getFileDescriptors().stream()
-                                    .filter(fileDescriptor -> fileDescriptor.getType() == BisqInstaller.DownloadType.JAR_HASH)
-                                    .findFirst()
-                                    .ifPresent(this::copyJarHashToDataDir);
-
                             verifyTask = installer.verify(downloadResults);
                             verifiedSigLabel.setOpacity(1);
 
@@ -260,9 +247,6 @@ public class DisplayUpdateDownloadWindow extends Overlay<DisplayUpdateDownloadWi
                                 if (verifyResults == null || verifyResults.isEmpty() || verifyFailed.isPresent()) {
                                     showErrorMessage(downloadButton, statusLabel, Res.get("displayUpdateDownloadWindow.verify.failed"));
                                 } else {
-                                    // We set a flag to clear tor cache files at re-start. We cannot clear it now as Tor is used and
-                                    // that can cause problems.
-                                    user.getCookie().putAsBoolean(CookieKey.CLEAN_TOR_DIR_AT_RESTART, true);
                                     verifiedSigLabel.getStyleClass().add("success-text");
                                     new Popup().feedback(Res.get("displayUpdateDownloadWindow.success"))
                                             .actionButtonText(Res.get("displayUpdateDownloadWindow.download.openDir"))
@@ -272,8 +256,7 @@ public class DisplayUpdateDownloadWindow extends Overlay<DisplayUpdateDownloadWi
                                                     BisqApp.getShutDownHandler().run();
                                                     doClose();
                                                 } catch (IOException e2) {
-                                                    log.error(e2.getMessage());
-                                                    e2.printStackTrace();
+                                                    log.error("Error at Utilities.openFile", e2);
                                                 }
                                             })
                                             .onClose(this::doClose)
@@ -290,32 +273,6 @@ public class DisplayUpdateDownloadWindow extends Overlay<DisplayUpdateDownloadWi
                 showErrorMessage(downloadButton, statusLabel, (Res.get("displayUpdateDownloadWindow.installer.failed")));
             }
         });
-    }
-
-    private void copyJarHashToDataDir(BisqInstaller.FileDescriptor fileDescriptor) {
-        StringBuilder sb = new StringBuilder();
-        final File sourceFile = fileDescriptor.getSaveFile();
-        try (Scanner scanner = new Scanner(new FileReader(sourceFile))) {
-            while (scanner.hasNext()) {
-                sb.append(scanner.next());
-            }
-            scanner.close();
-            final String hashOfJar = sb.toString();
-
-            Path path = Paths.get(config.appDataDir.getPath(), fileDescriptor.getFileName());
-            final String target = path.toString();
-            try (PrintWriter writer = new PrintWriter(target, "UTF-8")) {
-                writer.println(hashOfJar);
-                writer.close();
-                log.info("Copied hash of jar from {} to {}", sourceFile.getAbsolutePath(), target);
-            } catch (Exception e) {
-                log.error(e.toString());
-                e.printStackTrace();
-            }
-        } catch (Exception e) {
-            log.error(e.toString());
-            e.printStackTrace();
-        }
     }
 
     @Override

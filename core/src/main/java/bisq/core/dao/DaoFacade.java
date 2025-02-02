@@ -37,6 +37,7 @@ import bisq.core.dao.governance.myvote.MyVoteListService;
 import bisq.core.dao.governance.param.Param;
 import bisq.core.dao.governance.period.CycleService;
 import bisq.core.dao.governance.period.PeriodService;
+import bisq.core.dao.governance.proposal.IssuanceProposal;
 import bisq.core.dao.governance.proposal.MyProposalListService;
 import bisq.core.dao.governance.proposal.ProposalConsensus;
 import bisq.core.dao.governance.proposal.ProposalListPresentation;
@@ -57,7 +58,6 @@ import bisq.core.dao.monitoring.DaoStateMonitoringService;
 import bisq.core.dao.state.DaoStateListener;
 import bisq.core.dao.state.DaoStateService;
 import bisq.core.dao.state.model.blockchain.BaseTx;
-import bisq.core.dao.state.model.blockchain.BaseTxOutput;
 import bisq.core.dao.state.model.blockchain.Block;
 import bisq.core.dao.state.model.blockchain.Tx;
 import bisq.core.dao.state.model.blockchain.TxOutput;
@@ -67,6 +67,7 @@ import bisq.core.dao.state.model.governance.Ballot;
 import bisq.core.dao.state.model.governance.BondedRoleType;
 import bisq.core.dao.state.model.governance.Cycle;
 import bisq.core.dao.state.model.governance.DaoPhase;
+import bisq.core.dao.state.model.governance.EvaluatedProposal;
 import bisq.core.dao.state.model.governance.IssuanceType;
 import bisq.core.dao.state.model.governance.Proposal;
 import bisq.core.dao.state.model.governance.Role;
@@ -96,7 +97,6 @@ import javafx.beans.property.SimpleObjectProperty;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 
-import java.io.File;
 import java.io.IOException;
 
 import java.util.ArrayList;
@@ -252,11 +252,13 @@ public class DaoFacade implements DaoSetupService {
     // Creation of Proposal and proposalTransaction
     public ProposalWithTransaction getCompensationProposalWithTransaction(String name,
                                                                           String link,
-                                                                          Coin requestedBsq)
+                                                                          Coin requestedBsq,
+                                                                          Optional<String> burningManReceiverAddress)
             throws ProposalValidationException, InsufficientMoneyException, TxException {
         return compensationProposalFactory.createProposalWithTransaction(name,
                 link,
-                requestedBsq);
+                requestedBsq,
+                burningManReceiverAddress);
     }
 
     public ProposalWithTransaction getReimbursementProposalWithTransaction(String name,
@@ -529,9 +531,12 @@ public class DaoFacade implements DaoSetupService {
         return daoStateService.getBlockAtHeight(chainHeight);
     }
 
-    public boolean daoStateNeedsRebuilding() {
-        return daoStateMonitoringService.isInConflictWithSeedNode() || daoStateMonitoringService.isDaoStateBlockChainNotConnecting();
+    public boolean isDaoStateReadyAndInSync() {
+        return daoStateService.isParseBlockChainComplete() &&
+                !daoStateMonitoringService.isInConflictWithSeedNode() &&
+                !daoStateMonitoringService.isDaoStateBlockChainNotConnecting();
     }
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Use case: Bonding
@@ -576,10 +581,6 @@ public class DaoFacade implements DaoSetupService {
         return daoStateService.getTotalAmountOfConfiscatedTxOutputs();
     }
 
-    public long getTotalAmountOfInvalidatedBsq() {
-        return daoStateService.getTotalAmountOfInvalidatedBsq();
-    }
-
     // Contains burned fee and invalidated bsq due invalid txs
     public long getTotalAmountOfBurntBsq() {
         return daoStateService.getTotalAmountOfBurntBsq();
@@ -593,24 +594,19 @@ public class DaoFacade implements DaoSetupService {
         return daoStateService.getIrregularTxs();
     }
 
-    public long getTotalAmountOfUnspentTxOutputs() {
-        // Does not consider confiscated outputs (they stay as utxo)
-        return daoStateService.getUnspentTxOutputMap().values().stream().mapToLong(BaseTxOutput::getValue).sum();
-    }
-
     public Optional<Integer> getLockTime(String txId) {
         return daoStateService.getLockTime(txId);
     }
 
 
-    public List<Bond> getAllBonds() {
-        List<Bond> bonds = new ArrayList<>(bondedReputationRepository.getBonds());
+    public List<Bond<?>> getAllBonds() {
+        List<Bond<?>> bonds = new ArrayList<>(bondedReputationRepository.getBonds());
         bonds.addAll(bondedRolesRepository.getBonds());
         return bonds;
     }
 
-    public List<Bond> getAllActiveBonds() {
-        List<Bond> bonds = new ArrayList<>(bondedReputationRepository.getActiveBonds());
+    public List<Bond<?>> getAllActiveBonds() {
+        List<Bond<?>> bonds = new ArrayList<>(bondedReputationRepository.getActiveBonds());
         bonds.addAll(bondedRolesRepository.getActiveBonds());
         return bonds;
     }
@@ -736,15 +732,15 @@ public class DaoFacade implements DaoSetupService {
         daoStateStorageService.resyncDaoStateFromGenesis(resultHandler);
     }
 
-    public void resyncDaoStateFromResources(File storageDir) throws IOException {
-        daoStateStorageService.resyncDaoStateFromResources(storageDir);
+    public void removeAndBackupAllDaoData() throws IOException {
+        daoStateStorageService.removeAndBackupAllDaoData();
     }
 
     public boolean isMyRole(Role role) {
         return bondedRolesRepository.isMyRole(role);
     }
 
-    public Optional<Bond> getBondByLockupTxId(String lockupTxId) {
+    public Optional<Bond<?>> getBondByLockupTxId(String lockupTxId) {
         return getAllBonds().stream().filter(e -> lockupTxId.equals(e.getLockupTxId())).findAny();
     }
 
@@ -810,5 +806,15 @@ public class DaoFacade implements DaoSetupService {
 
     public boolean isParseBlockChainComplete() {
         return daoStateService.isParseBlockChainComplete();
+    }
+
+    public long getIssuanceForCycle(Cycle cycle) {
+        return daoStateService.getEvaluatedProposalList().stream()
+                .filter(EvaluatedProposal::isAccepted)
+                .filter(evaluatedProposal -> cycleService.isTxInCycle(cycle, evaluatedProposal.getProposal().getTxId()))
+                .filter(e -> e.getProposal() instanceof IssuanceProposal)
+                .map(e -> (IssuanceProposal) e.getProposal())
+                .mapToLong(e -> e.getRequestedBsq().value)
+                .sum();
     }
 }

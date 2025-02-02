@@ -49,7 +49,7 @@ import org.jetbrains.annotations.NotNull;
  */
 @Slf4j
 class GetBlocksRequestHandler {
-    private static final long TIMEOUT_MIN = 3;
+    private static final long TIMEOUT_MIN = 4;
 
 
     ///////////////////////////////////////////////////////////////////////////////////////////
@@ -57,7 +57,7 @@ class GetBlocksRequestHandler {
     ///////////////////////////////////////////////////////////////////////////////////////////
 
     public interface Listener {
-        void onComplete();
+        void onComplete(int serializedSize);
 
         void onFault(String errorMessage, Connection connection);
     }
@@ -91,9 +91,11 @@ class GetBlocksRequestHandler {
 
     public void onGetBlocksRequest(GetBlocksRequest getBlocksRequest, Connection connection) {
         long ts = System.currentTimeMillis();
-        // We limit number of blocks to 4000 which is about 1 month.
-        List<Block> blocks = new LinkedList<>(daoStateService.getBlocksFromBlockHeight(getBlocksRequest.getFromBlockHeight(), 4000));
-        List<RawBlock> rawBlocks = blocks.stream().map(RawBlock::fromBlock).collect(Collectors.toList());
+        // We limit number of blocks to 3000 which is about 3 weeks and about 5 MB on data
+        List<RawBlock> rawBlocks = daoStateService.getBlocksFromBlockHeightStream(getBlocksRequest.getFromBlockHeight(), 3000)
+                .map(RawBlock::fromBlock)
+                .collect(Collectors.toCollection(LinkedList::new));
+
         GetBlocksResponse getBlocksResponse = new GetBlocksResponse(rawBlocks, getBlocksRequest.getNonce());
         log.info("Received GetBlocksRequest from {} for blocks from height {}. " +
                         "Building GetBlocksResponse with {} blocks took {} ms.",
@@ -120,7 +122,7 @@ class GetBlocksRequestHandler {
                     log.info("Send DataResponse to {} succeeded. getBlocksResponse.getBlocks().size()={}",
                             connection.getPeersNodeAddressOptional(), getBlocksResponse.getBlocks().size());
                     cleanup();
-                    listener.onComplete();
+                    listener.onComplete(getBlocksResponse.toProtoNetworkEnvelope().getSerializedSize());
                 } else {
                     log.trace("We have stopped already. We ignore that networkNode.sendMessage.onSuccess call.");
                 }

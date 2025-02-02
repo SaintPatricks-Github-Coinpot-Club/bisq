@@ -130,6 +130,10 @@ public class PaymentAccountFactory {
                 return new DomesticWireTransferAccount();
             case PaymentMethod.BSQ_SWAP_ID:
                 return new BsqSwapAccount();
+            case PaymentMethod.MERCADO_PAGO_ID:
+                return new MercadoPagoAccount();
+            case PaymentMethod.SBP_ID:
+                return new SbpAccount();
 
             // Cannot be deleted as it would break old trade history entries
             case PaymentMethod.OK_PAY_ID:

@@ -17,32 +17,37 @@
 
 package bisq.core.btc.nodes;
 
+import bisq.core.btc.nodes.BtcNodes.BtcNode;
 import bisq.core.user.Preferences;
 
+import bisq.common.config.Config;
 import bisq.common.util.Utilities;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 
 public class BtcNodesSetupPreferences {
     private static final Logger log = LoggerFactory.getLogger(BtcNodesSetupPreferences.class);
 
     private final Preferences preferences;
     private final int numConnectionsForBtc;
+    private final Config config;
 
     public BtcNodesSetupPreferences(Preferences preferences,
-                                    int numConnectionsForBtc) {
+                                    int numConnectionsForBtc,
+                                    Config config) {
         this.preferences = preferences;
         this.numConnectionsForBtc = numConnectionsForBtc;
+        this.config = config;
     }
 
-    public List<BtcNodes.BtcNode> selectPreferredNodes(BtcNodes nodes) {
-        List<BtcNodes.BtcNode> result;
+    public List<BtcNode> selectPreferredNodes(BtcNodes btcNodes) {
+        List<BtcNode> result;
 
         BtcNodes.BitcoinNodesOption nodesOption = BtcNodes.BitcoinNodesOption.values()[preferences.getBitcoinNodesOptionOrdinal()];
         switch (nodesOption) {
@@ -51,10 +56,10 @@ public class BtcNodesSetupPreferences {
                 Set<String> distinctNodes = Utilities.commaSeparatedListToSet(bitcoinNodes, false);
                 result = BtcNodes.toBtcNodesList(distinctNodes);
                 if (result.isEmpty()) {
-                    log.warn("Custom nodes is set but no valid nodes are provided. " +
-                            "We fall back to provided nodes option.");
+                    log.warn("Custom btcNodes is set but no valid btcNodes are provided. " +
+                            "We fall back to provided btcNodes option.");
                     preferences.setBitcoinNodesOptionOrdinal(BtcNodes.BitcoinNodesOption.PROVIDED.ordinal());
-                    result = nodes.getProvidedBtcNodes();
+                    result = btcNodes.getProvidedBtcNodes();
                 }
                 break;
             case PUBLIC:
@@ -62,7 +67,10 @@ public class BtcNodesSetupPreferences {
                 break;
             case PROVIDED:
             default:
-                result = nodes.getProvidedBtcNodes();
+                Stream<BtcNode> hardcodedBtcNodes = btcNodes.getProvidedBtcNodes().stream();
+                Stream<String> filterProvidedBtcNodes = config.filterProvidedBtcNodes.stream();
+                Stream<String> bannedBtcNodes = config.bannedBtcNodes.stream();
+                result = FederatedBtcNodeProvider.getNodes(hardcodedBtcNodes, filterProvidedBtcNodes, bannedBtcNodes);
                 break;
         }
 
@@ -73,7 +81,7 @@ public class BtcNodesSetupPreferences {
         return BtcNodes.BitcoinNodesOption.CUSTOM.ordinal() == preferences.getBitcoinNodesOptionOrdinal();
     }
 
-    public int calculateMinBroadcastConnections(List<BtcNodes.BtcNode> nodes) {
+    public int calculateMinBroadcastConnections(List<BtcNode> nodes) {
         BtcNodes.BitcoinNodesOption nodesOption = BtcNodes.BitcoinNodesOption.values()[preferences.getBitcoinNodesOptionOrdinal()];
         int result;
         switch (nodesOption) {
@@ -96,5 +104,4 @@ public class BtcNodesSetupPreferences {
         }
         return result;
     }
-
 }

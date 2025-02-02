@@ -60,6 +60,7 @@ import javafx.geometry.Insets;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static bisq.desktop.util.FormBuilder.addInputTextField;
@@ -129,8 +130,10 @@ public class FilterWindow extends Overlay<FilterWindow> {
 
         InputTextField keyTF = addInputTextField(gridPane, ++rowIndex,
                 Res.get("shared.unlock"), 10);
+        InputTextField uidTF = addInputTextField(gridPane, ++rowIndex,
+                "UID", 10);
         if (useDevPrivilegeKeys) {
-            keyTF.setText(DevEnv.DEV_PRIVILEGE_PRIV_KEY);
+            keyTF.setText(DevEnv.getDEV_PRIVILEGE_PRIV_KEY());
         }
 
         InputTextField offerIdsTF = addInputTextField(gridPane, ++rowIndex,
@@ -144,6 +147,12 @@ public class FilterWindow extends Overlay<FilterWindow> {
                 Res.get("filterWindow.accounts")).second;
         GridPane.setHalignment(paymentAccountFilterTF, HPos.RIGHT);
         paymentAccountFilterTF.setPromptText("E.g. PERFECT_MONEY|getAccountNr|12345"); // Do not translate
+
+        InputTextField delayedPayoutTF = addTopLabelInputTextField(gridPane, ++rowIndex,
+                Res.get("filterWindow.delayedPayout")).second;
+        GridPane.setHalignment(delayedPayoutTF, HPos.RIGHT);
+        delayedPayoutTF.setPromptText("E.g. SEPA|getBic|COBADEH077X"); // Do not translate
+
         InputTextField bannedCurrenciesTF = addInputTextField(gridPane, ++rowIndex,
                 Res.get("filterWindow.bannedCurrencies"));
         InputTextField bannedPaymentMethodsTF = addTopLabelInputTextField(gridPane, ++rowIndex,
@@ -162,12 +171,16 @@ public class FilterWindow extends Overlay<FilterWindow> {
                 Res.get("filterWindow.btcFeeReceiverAddresses"));
         InputTextField seedNodesTF = addInputTextField(gridPane, ++rowIndex,
                 Res.get("filterWindow.seedNode"));
+        InputTextField addedSeedNodesTF = addInputTextField(gridPane, ++rowIndex,
+                Res.get("filterWindow.addedSeedNodes"));
         InputTextField priceRelayNodesTF = addInputTextField(gridPane, ++rowIndex,
                 Res.get("filterWindow.priceRelayNode"));
         InputTextField btcNodesTF = addInputTextField(gridPane, ++rowIndex,
                 Res.get("filterWindow.btcNode"));
+        InputTextField addedBtcNodesTF = addInputTextField(gridPane, ++rowIndex,
+                Res.get("filterWindow.addedBtcNodes"));
         CheckBox preventPublicBtcNetworkCheckBox = addLabelCheckBox(gridPane, ++rowIndex,
-                Res.get("filterWindow.preventPublicBtcNetwork"));
+                Res.get("filterWindow.preventPublicBtcNetwork"), 15);
         CheckBox disableDaoCheckBox = addLabelCheckBox(gridPane, ++rowIndex,
                 Res.get("filterWindow.disableDao"));
         CheckBox disableAutoConfCheckBox = addLabelCheckBox(gridPane, ++rowIndex,
@@ -181,7 +194,7 @@ public class FilterWindow extends Overlay<FilterWindow> {
         InputTextField autoConfExplorersTF = addTopLabelInputTextField(gridPane, ++rowIndex,
                 Res.get("filterWindow.autoConfExplorers")).second;
         CheckBox disableMempoolValidationCheckBox = addLabelCheckBox(gridPane, ++rowIndex,
-                Res.get("filterWindow.disableMempoolValidation"));
+                Res.get("filterWindow.disableMempoolValidation"), 15);
         CheckBox disableApiCheckBox = addLabelCheckBox(gridPane, ++rowIndex,
                 Res.get("filterWindow.disableApi"));
         CheckBox disablePowMessage = addLabelCheckBox(gridPane, ++rowIndex,
@@ -202,6 +215,7 @@ public class FilterWindow extends Overlay<FilterWindow> {
 
         Filter filter = filterManager.getDevFilter();
         if (filter != null) {
+            uidTF.setText(filter.getUid());
             setupFieldFromList(offerIdsTF, filter.getBannedOfferIds());
             setupFieldFromList(bannedFromTradingTF, filter.getNodeAddressesBannedFromTrading());
             setupFieldFromList(bannedFromNetworkTF, filter.getNodeAddressesBannedFromNetwork());
@@ -214,8 +228,10 @@ public class FilterWindow extends Overlay<FilterWindow> {
             setupFieldFromList(refundAgentsTF, filter.getRefundAgents());
             setupFieldFromList(btcFeeReceiverAddressesTF, filter.getBtcFeeReceiverAddresses());
             setupFieldFromList(seedNodesTF, filter.getSeedNodes());
+            setupFieldFromList(addedSeedNodesTF, filter.getAddedSeedNodes());
             setupFieldFromList(priceRelayNodesTF, filter.getPriceRelayNodes());
             setupFieldFromList(btcNodesTF, filter.getBtcNodes());
+            setupFieldFromList(addedBtcNodesTF, filter.getAddedBtcNodes());
             setupFieldFromList(bannedPrivilegedDevPubKeysTF, filter.getBannedPrivilegedDevPubKeys());
             setupFieldFromList(autoConfExplorersTF, filter.getBannedAutoConfExplorers());
             setupFieldFromList(enabledPowVersionsTF, filter.getEnabledPowVersions());
@@ -234,6 +250,9 @@ public class FilterWindow extends Overlay<FilterWindow> {
             takerFeeBtcTF.setText(btcFormatter.formatCoin(Coin.valueOf(filter.getTakerFeeBtc())));
             makerFeeBsqTF.setText(bsqFormatter.formatBSQSatoshis(filter.getMakerFeeBsq()));
             takerFeeBsqTF.setText(bsqFormatter.formatBSQSatoshis(filter.getTakerFeeBsq()));
+            setupFieldFromPaymentAccountFiltersList(delayedPayoutTF, filter.getDelayedPayoutPaymentAccounts());
+        } else {
+            uidTF.setText(UUID.randomUUID().toString());
         }
 
         Button removeFilterMessageButton = new AutoTooltipButton(Res.get("filterWindow.remove"));
@@ -276,7 +295,11 @@ public class FilterWindow extends Overlay<FilterWindow> {
                         ParsingUtils.parseToCoin(makerFeeBtcTF.getText(), btcFormatter).value,
                         ParsingUtils.parseToCoin(takerFeeBtcTF.getText(), btcFormatter).value,
                         ParsingUtils.parseToCoin(makerFeeBsqTF.getText(), bsqFormatter).value,
-                        ParsingUtils.parseToCoin(takerFeeBsqTF.getText(), bsqFormatter).value
+                        ParsingUtils.parseToCoin(takerFeeBsqTF.getText(), bsqFormatter).value,
+                        readAsPaymentAccountFiltersList(delayedPayoutTF),
+                        readAsList(addedBtcNodesTF),
+                        readAsList(addedSeedNodesTF),
+                        uidTF.getText()
                 );
 
                 // We remove first the old filter

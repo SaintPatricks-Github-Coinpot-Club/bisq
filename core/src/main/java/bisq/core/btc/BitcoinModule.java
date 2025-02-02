@@ -26,8 +26,7 @@ import bisq.core.btc.wallet.BsqWalletService;
 import bisq.core.btc.wallet.BtcWalletService;
 import bisq.core.btc.wallet.NonBsqCoinSelector;
 import bisq.core.btc.wallet.TradeWalletService;
-import bisq.core.provider.ProvidersRepository;
-import bisq.core.provider.fee.FeeProvider;
+import bisq.core.provider.PriceFeedNodeAddressProvider;
 import bisq.core.provider.fee.FeeService;
 import bisq.core.provider.price.PriceFeedService;
 
@@ -58,9 +57,9 @@ public class BitcoinModule extends AppModule {
         // otherwise the specified host or default (localhost)
         String regTestHost = config.bitcoinRegtestHost;
         if (regTestHost.isEmpty()) {
-            regTestHost = config.baseCurrencyNetwork.isDaoTestNet() ?
+            regTestHost = config.getBaseCurrencyNetwork().isDaoTestNet() ?
                     "104.248.31.39" :
-                    config.baseCurrencyNetwork.isDaoRegTest() ?
+                    config.getBaseCurrencyNetwork().isDaoRegTest() ?
                             "134.209.242.206" :
                             Config.DEFAULT_REGTEST_HOST;
         }
@@ -94,8 +93,7 @@ public class BitcoinModule extends AppModule {
         bind(BtcNodes.class).in(Singleton.class);
         bind(Balances.class).in(Singleton.class);
 
-        bind(ProvidersRepository.class).in(Singleton.class);
-        bind(FeeProvider.class).in(Singleton.class);
+        bind(PriceFeedNodeAddressProvider.class).in(Singleton.class);
         bind(PriceFeedService.class).in(Singleton.class);
         bind(FeeService.class).in(Singleton.class);
         bind(TxFeeEstimationService.class).in(Singleton.class);

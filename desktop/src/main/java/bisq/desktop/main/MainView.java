@@ -430,13 +430,10 @@ public class MainView extends InitializableView<StackPane, MainViewModel>
     ///////////////////////////////////////////////////////////////////////////////////////////
 
     @Override
-    public void onDaoStateHashesChanged() {
-    }
-
-    @Override
-    public void onCheckpointFail() {
+    public void onCheckpointFailed() {
         new Popup().attention(Res.get("dao.monitor.daoState.checkpoint.popup"))
                 .useShutDownButton()
+                .hideCloseButton()
                 .show();
     }
 
@@ -820,7 +817,7 @@ public class MainView extends InitializableView<StackPane, MainViewModel>
             }
         });
 
-        model.getUpdatedDataReceived().addListener((observable, oldValue, newValue) -> {
+        model.getDataReceived().addListener((observable, oldValue, newValue) -> {
             p2PNetworkIcon.setOpacity(1);
             p2pNetworkProgressBar.setProgress(0);
         });

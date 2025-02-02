@@ -21,8 +21,9 @@ import bisq.core.locale.CurrencyUtil;
 import bisq.core.locale.TradeCurrency;
 import bisq.core.monetary.Altcoin;
 import bisq.core.monetary.Price;
+import bisq.core.provider.PriceFeedNodeAddressProvider;
 import bisq.core.provider.PriceHttpClient;
-import bisq.core.provider.ProvidersRepository;
+import bisq.core.provider.fee.FeeService;
 import bisq.core.user.Preferences;
 
 import bisq.network.http.HttpClient;
@@ -31,7 +32,6 @@ import bisq.common.Timer;
 import bisq.common.UserThread;
 import bisq.common.handlers.FaultHandler;
 import bisq.common.util.MathUtils;
-import bisq.common.util.Tuple2;
 
 import com.google.inject.Inject;
 
@@ -66,8 +66,9 @@ import static com.google.common.base.Preconditions.checkNotNull;
 @Slf4j
 public class PriceFeedService {
     private final HttpClient httpClient;
-    private final ProvidersRepository providersRepository;
+    private final PriceFeedNodeAddressProvider priceFeedNodeAddressProvider;
     private final Preferences preferences;
+    private final FeeService feeService;
 
     private static final long PERIOD_SEC = 60;
 
@@ -88,6 +89,8 @@ public class PriceFeedService {
     @Nullable
     private Timer requestTimer;
     @Nullable
+    private Timer retryWithNewProviderTime;
+    @Nullable
     private PriceRequest priceRequest;
 
 
@@ -97,14 +100,16 @@ public class PriceFeedService {
 
     @Inject
     public PriceFeedService(PriceHttpClient httpClient,
-                            @SuppressWarnings("SameParameterValue") ProvidersRepository providersRepository,
+                            FeeService feeService,
+                            @SuppressWarnings("SameParameterValue") PriceFeedNodeAddressProvider priceFeedNodeAddressProvider,
                             @SuppressWarnings("SameParameterValue") Preferences preferences) {
         this.httpClient = httpClient;
-        this.providersRepository = providersRepository;
+        this.priceFeedNodeAddressProvider = priceFeedNodeAddressProvider;
         this.preferences = preferences;
+        this.feeService = feeService;
 
         // Do not use Guice for PriceProvider as we might create multiple instances
-        this.priceProvider = new PriceProvider(httpClient, providersRepository.getBaseUrl());
+        this.priceProvider = new PriceProvider(httpClient, priceFeedNodeAddressProvider.getBaseUrl());
     }
 
 
@@ -116,6 +121,10 @@ public class PriceFeedService {
         if (requestTimer != null) {
             requestTimer.stop();
             requestTimer = null;
+        }
+        if (retryWithNewProviderTime != null) {
+            retryWithNewProviderTime.stop();
+            retryWithNewProviderTime = null;
         }
         if (priceRequest != null) {
             priceRequest.shutDown();
@@ -152,10 +161,10 @@ public class PriceFeedService {
     private void request(boolean repeatRequests) {
         if (requestTs == 0)
             log.debug("request from provider {}",
-                    providersRepository.getBaseUrl());
+                    priceFeedNodeAddressProvider.getBaseUrl());
         else
             log.debug("request from provider {} {} sec. after last request",
-                    providersRepository.getBaseUrl(),
+                    priceFeedNodeAddressProvider.getBaseUrl(),
                     (System.currentTimeMillis() - requestTs) / 1000d);
 
         requestTs = System.currentTimeMillis();
@@ -227,7 +236,13 @@ public class PriceFeedService {
 
     private void retryWithNewProvider() {
         // We increase retry delay each time until we reach PERIOD_SEC to not exceed requests.
-        UserThread.runAfter(() -> {
+
+        if (retryWithNewProviderTime != null) {
+            // If we have a retry timer already running we keep the old one and return.
+            return;
+        }
+
+        retryWithNewProviderTime = UserThread.runAfter(() -> {
             retryDelay = Math.min(retryDelay + 5, PERIOD_SEC);
 
             String oldBaseUrl = priceProvider.getBaseUrl();
@@ -236,13 +251,14 @@ public class PriceFeedService {
                     "We select the new provider {} and use that for a new request. retryDelay was {} sec.", oldBaseUrl, priceProvider.getBaseUrl(), retryDelay);
 
             request(true);
+            retryWithNewProviderTime = null;
         }, retryDelay);
     }
 
     private void setNewPriceProvider() {
-        providersRepository.selectNextProviderBaseUrl();
-        if (!providersRepository.getBaseUrl().isEmpty())
-            priceProvider = new PriceProvider(httpClient, providersRepository.getBaseUrl());
+        priceFeedNodeAddressProvider.selectNextProviderBaseUrl();
+        if (!priceFeedNodeAddressProvider.getBaseUrl().isEmpty())
+            priceProvider = new PriceProvider(httpClient, priceFeedNodeAddressProvider.getBaseUrl());
         else
             log.warn("We cannot create a new priceProvider because new base url is empty.");
     }
@@ -376,26 +392,26 @@ public class PriceFeedService {
 
     private void requestAllPrices(PriceProvider provider, Runnable resultHandler, FaultHandler faultHandler) {
         if (httpClient.hasPendingRequest()) {
-            log.warn("We have a pending request open. We ignore that request. httpClient {}", httpClient);
+            log.debug("We have a pending request open. This is expected when we got repeated calls. We ignore that request. httpClient {}", httpClient);
             return;
         }
 
         priceRequest = new PriceRequest();
-        SettableFuture<Tuple2<Map<String, Long>, Map<String, MarketPrice>>> future = priceRequest.requestAllPrices(provider);
+        SettableFuture<PricenodeDto> future = priceRequest.requestAllPrices(provider);
         Futures.addCallback(future, new FutureCallback<>() {
             @Override
-            public void onSuccess(@Nullable Tuple2<Map<String, Long>, Map<String, MarketPrice>> result) {
+            public void onSuccess(@Nullable PricenodeDto result) {
                 UserThread.execute(() -> {
                     checkNotNull(result, "Result must not be null at requestAllPrices");
                     // Each currency rate has a different timestamp, depending on when
                     // the priceNode aggregate rate was calculated
                     // However, the request timestamp is when the pricenode was queried
                     epochInMillisAtLastRequest = System.currentTimeMillis();
-
-                    Map<String, MarketPrice> priceMap = result.second;
-
-                    cache.putAll(priceMap);
-
+                    result.getData().forEach(p ->
+                            cache.put(p.currencyCode, new MarketPrice(p.currencyCode, p.price, p.timestampSec, true)));
+                    if (result.getBitcoinFeesTs() > 0) {
+                        feeService.updateFeeInfo(result.getBitcoinFeeInfo().btcTxFee, result.getBitcoinFeeInfo().btcMinTxFee);
+                    }
                     resultHandler.run();
                 });
             }

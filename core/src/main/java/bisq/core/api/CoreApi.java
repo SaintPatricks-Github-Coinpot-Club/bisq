@@ -56,6 +56,8 @@ import java.util.function.Consumer;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import javax.annotation.Nullable;
+
 import static bisq.proto.grpc.EditOfferRequest.EditType;
 
 /**
@@ -318,8 +320,8 @@ public class CoreApi {
                 errorMessageHandler);
     }
 
-    public void confirmPaymentStarted(String tradeId) {
-        coreTradesService.confirmPaymentStarted(tradeId);
+    public void confirmPaymentStarted(String tradeId, @Nullable String txId, @Nullable String txKey) {
+        coreTradesService.confirmPaymentStarted(tradeId, txId, txKey);
     }
 
     public void confirmPaymentReceived(String tradeId) {
@@ -374,6 +376,10 @@ public class CoreApi {
         return walletsService.getNetworkName();
     }
 
+    public boolean isDaoStateReadyAndInSync() {
+        return walletsService.isDaoStateReadyAndInSync();
+    }
+
     public BalancesInfo getBalances(String currencyCode) {
         return walletsService.getBalances(currencyCode);
     }
@@ -413,21 +419,20 @@ public class CoreApi {
         return walletsService.verifyBsqSentToAddress(address, amount);
     }
 
-    public void getTxFeeRate(ResultHandler resultHandler) {
-        walletsService.getTxFeeRate(resultHandler);
+    public void setTxFeeRatePreference(long txFeeRate) {
+        walletsService.setTxFeeRatePreference(txFeeRate);
     }
 
-    public void setTxFeeRatePreference(long txFeeRate,
-                                       ResultHandler resultHandler) {
-        walletsService.setTxFeeRatePreference(txFeeRate, resultHandler);
-    }
-
-    public void unsetTxFeeRatePreference(ResultHandler resultHandler) {
-        walletsService.unsetTxFeeRatePreference(resultHandler);
+    public void unsetTxFeeRatePreference() {
+        walletsService.unsetTxFeeRatePreference();
     }
 
     public TxFeeRateInfo getMostRecentTxFeeRateInfo() {
         return walletsService.getMostRecentTxFeeRateInfo();
+    }
+
+    public Set<Transaction> getTransactions() {
+        return walletsService.getTransactions();
     }
 
     public Transaction getTransaction(String txId) {

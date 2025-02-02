@@ -26,6 +26,7 @@ import bisq.core.offer.OpenOffer;
 import bisq.core.trade.model.Tradable;
 import bisq.core.trade.model.bisq_v1.Trade;
 import bisq.core.util.FormattingUtils;
+import bisq.core.util.PriceUtil;
 import bisq.core.util.coin.BsqFormatter;
 import bisq.core.util.coin.CoinFormatter;
 
@@ -49,7 +50,6 @@ import static bisq.core.trade.model.bisq_v1.Trade.DisputeState.DISPUTE_CLOSED;
 import static bisq.core.trade.model.bisq_v1.Trade.DisputeState.MEDIATION_CLOSED;
 import static bisq.core.trade.model.bisq_v1.Trade.DisputeState.REFUND_REQUEST_CLOSED;
 import static bisq.core.util.FormattingUtils.BTC_FORMATTER_KEY;
-import static bisq.core.util.FormattingUtils.formatPercentagePrice;
 import static bisq.core.util.FormattingUtils.formatToPercentWithSymbol;
 import static bisq.core.util.VolumeUtil.formatVolume;
 import static bisq.core.util.VolumeUtil.formatVolumeWithCode;
@@ -97,7 +97,8 @@ public class ClosedTradableFormatter {
     }
 
     public String getTotalTxFeeAsString(Coin totalTradeAmount, Coin totalTxFee) {
-        double percentage = ((double) totalTxFee.value) / totalTradeAmount.value;
+        double percentage = Math.abs(totalTradeAmount.value) > 0 ?          // protect from divide-by-zero
+            ((double) totalTxFee.value) / totalTradeAmount.value : 0;
         return Res.get(I18N_KEY_TOTAL_TX_FEE,
                 btcFormatter.formatCoin(totalTxFee, true),
                 formatToPercentWithSymbol(percentage));
@@ -116,7 +117,8 @@ public class ClosedTradableFormatter {
     public String getTotalTradeFeeInBsqAsString(Coin totalTradeFee,
                                                 Volume tradeAmountVolume,
                                                 Volume bsqVolumeInUsd) {
-        double percentage = ((double) bsqVolumeInUsd.getValue()) / tradeAmountVolume.getValue();
+        double percentage = Math.abs(tradeAmountVolume.getValue()) > 0 ?          // protect from divide-by-zero
+            ((double) bsqVolumeInUsd.getValue()) / tradeAmountVolume.getValue() : 0;
         return Res.get(I18N_KEY_TOTAL_TRADE_FEE_BSQ,
                 bsqFormatter.formatCoin(totalTradeFee, true),
                 formatToPercentWithSymbol(percentage));
@@ -132,18 +134,17 @@ public class ClosedTradableFormatter {
     }
 
     public String getTotalTradeFeeInBtcAsString(Coin totalTradeAmount, Coin totalTradeFee) {
-        double percentage = ((double) totalTradeFee.value) / totalTradeAmount.value;
+        double percentage = Math.abs(totalTradeAmount.value) > 0 ?          // protect from divide-by-zero
+            ((double) totalTradeFee.value) / totalTradeAmount.value : 0;
         return Res.get(I18N_KEY_TOTAL_TRADE_FEE_BTC,
                 btcFormatter.formatCoin(totalTradeFee, true),
                 formatToPercentWithSymbol(percentage));
     }
 
     public String getPriceDeviationAsString(Tradable tradable) {
-        if (tradable.getOffer().isUseMarketBasedPrice()) {
-            return formatPercentagePrice(tradable.getOffer().getMarketPriceMargin());
-        } else {
-            return Res.get("shared.na");
-        }
+        return PriceUtil.offerPercentageToDeviation(tradable.getOffer())
+                .map(FormattingUtils::formatPercentagePrice)
+                .orElse(Res.get("shared.na"));
     }
 
     public String getVolumeAsString(Tradable tradable, boolean appendCode) {

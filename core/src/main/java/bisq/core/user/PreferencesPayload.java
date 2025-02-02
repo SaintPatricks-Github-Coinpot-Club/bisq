@@ -145,6 +145,14 @@ public final class PreferencesPayload implements PersistableEnvelope {
     private long userDefinedTradeLimit = Preferences.INITIAL_TRADE_LIMIT;
     private boolean userHasRaisedTradeLimit = false;
 
+    // Added at 1.9.11
+    private boolean processBurningManAccountingData = false;
+
+    // Added at 1.9.11
+    private boolean isFullBMAccountingNode = false;
+
+    private boolean useBisqWalletFunding = false;
+
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Constructor
     ///////////////////////////////////////////////////////////////////////////////////////////
@@ -216,7 +224,10 @@ public final class PreferencesPayload implements PersistableEnvelope {
                 .setUseFullModeDaoMonitor(useFullModeDaoMonitor)
                 .setUseBitcoinUrisInQrCodes(useBitcoinUrisInQrCodes)
                 .setUserDefinedTradeLimit(userDefinedTradeLimit)
-                .setUserHasRaisedTradeLimit(userHasRaisedTradeLimit);
+                .setUserHasRaisedTradeLimit(userHasRaisedTradeLimit)
+                .setProcessBurningManAccountingData(processBurningManAccountingData)
+                .setIsFullBMAccountingNode(isFullBMAccountingNode)
+                .setUseBisqWalletFunding(useBisqWalletFunding);
 
         Optional.ofNullable(backupDirectory).ifPresent(builder::setBackupDirectory);
         Optional.ofNullable(preferredTradeCurrency).ifPresent(e -> builder.setPreferredTradeCurrency((protobuf.TradeCurrency) e.toProtoMessage()));
@@ -323,7 +334,10 @@ public final class PreferencesPayload implements PersistableEnvelope {
                 proto.getUseFullModeDaoMonitor(),
                 proto.getUseBitcoinUrisInQrCodes(),
                 proto.getUserHasRaisedTradeLimit() ? proto.getUserDefinedTradeLimit() : Preferences.INITIAL_TRADE_LIMIT,
-                proto.getUserHasRaisedTradeLimit()
+                proto.getUserHasRaisedTradeLimit(),
+                proto.getProcessBurningManAccountingData(),
+                proto.getIsFullBMAccountingNode(),
+                proto.getUseBisqWalletFunding()
         );
     }
 }

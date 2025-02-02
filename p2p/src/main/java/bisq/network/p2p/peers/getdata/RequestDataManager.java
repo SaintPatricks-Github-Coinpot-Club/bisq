@@ -43,6 +43,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -61,7 +62,9 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
     private static int NUM_SEEDS_FOR_PRELIMINARY_REQUEST = 2;
     // how many seeds additional to the first responding PreliminaryGetDataRequest seed we request the GetUpdatedDataRequest from
     private static int NUM_ADDITIONAL_SEEDS_FOR_UPDATE_REQUEST = 1;
+    private static int MAX_REPEATED_REQUESTS = 30;
     private boolean isPreliminaryDataRequest = true;
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Listener
@@ -81,6 +84,12 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
         }
     }
 
+    public interface ResponseListener {
+        void onSuccess(int serializedSize);
+
+        void onFault();
+    }
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Class fields
@@ -90,6 +99,7 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
     private final P2PDataStorage dataStorage;
     private final PeerManager peerManager;
     private final List<NodeAddress> seedNodeAddresses;
+    private final List<ResponseListener> responseListeners = new CopyOnWriteArrayList<>();
 
     // As we use Guice injection we cannot set the listener in our constructor but the P2PService calls the setListener
     // in it's constructor so we can guarantee it is not null.
@@ -100,6 +110,7 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
     private Optional<NodeAddress> nodeAddressOfPreliminaryDataRequest = Optional.empty();
     private Timer retryTimer;
     private boolean dataUpdateRequested;
+    private boolean allDataReceived;
     private boolean stopped;
     private int numRepeatedRequests = 0;
 
@@ -130,6 +141,7 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
                 if (seedNodeRepository.isSeedNode(myAddress)) {
                     NUM_SEEDS_FOR_PRELIMINARY_REQUEST = 3;
                     NUM_ADDITIONAL_SEEDS_FOR_UPDATE_REQUEST = 2;
+                    MAX_REPEATED_REQUESTS = 100;
                 }
             }
         });
@@ -205,6 +217,10 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
         return nodeAddressOfPreliminaryDataRequest;
     }
 
+    public void addResponseListener(ResponseListener responseListener) {
+        responseListeners.add(responseListener);
+    }
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // ConnectionListener implementation
@@ -223,10 +239,6 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
             seedNodeAddresses.remove(nodeAddress);
             handlerMap.remove(nodeAddress);
         }
-    }
-
-    @Override
-    public void onError(Throwable throwable) {
     }
 
 
@@ -276,9 +288,11 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
                     GetDataRequestHandler getDataRequestHandler = new GetDataRequestHandler(networkNode, dataStorage,
                             new GetDataRequestHandler.Listener() {
                                 @Override
-                                public void onComplete() {
+                                public void onComplete(int serializedSize) {
                                     getDataRequestHandlers.remove(uid);
                                     log.trace("requestDataHandshake completed.\n\tConnection={}", connection);
+
+                                    responseListeners.forEach(listener -> listener.onSuccess(serializedSize));
                                 }
 
                                 @Override
@@ -288,6 +302,8 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
                                         log.trace("GetDataRequestHandler failed.\n\tConnection={}\n\t" +
                                                 "ErrorMessage={}", connection, errorMessage);
                                         peerManager.handleConnectionFault(connection);
+
+                                        responseListeners.forEach(ResponseListener::onFault);
                                     } else {
                                         log.warn("We have stopped already. We ignore that getDataRequestHandler.handle.onFault call.");
                                     }
@@ -346,17 +362,26 @@ public class RequestDataManager implements MessageListener, ConnectionListener, 
                                     checkNotNull(listener).onUpdatedDataReceived();
                                 }
 
-                                checkNotNull(listener).onDataReceived();
-
                                 if (wasTruncated) {
-                                    if (numRepeatedRequests < 10) {
+                                    if (numRepeatedRequests < MAX_REPEATED_REQUESTS) {
+                                        // If we had allDataReceived already set to true but get a response with truncated flag,
+                                        // we still repeat the request to that node for higher redundancy. Otherwise, one seed node
+                                        // providing incomplete data would stop others to fill the gaps.
                                         log.info("DataResponse did not contain all data, so we repeat request until we got all data");
                                         UserThread.runAfter(() -> requestData(nodeAddress, remainingNodeAddresses), 2);
-                                    } else {
-                                        log.info("DataResponse still did not contained all data but we requested already 10 times and stop now.");
+                                    } else if (!allDataReceived) {
+                                        allDataReceived = true;
+                                        log.warn("\n#################################################################\n" +
+                                                "Loading initial data from {} did not complete after 20 repeated requests. \n" +
+                                                "#################################################################\n", nodeAddress);
+                                        checkNotNull(listener).onDataReceived();
                                     }
-                                } else {
-                                    log.info("DataResponse contained all data");
+                                } else if (!allDataReceived) {
+                                    allDataReceived = true;
+                                    log.info("\n\n#################################################################\n" +
+                                            "Loading initial data from {} completed\n" +
+                                            "#################################################################\n", nodeAddress);
+                                    checkNotNull(listener).onDataReceived();
                                 }
                             }
 

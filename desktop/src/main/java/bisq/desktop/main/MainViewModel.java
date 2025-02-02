@@ -27,6 +27,7 @@ import bisq.desktop.main.overlays.Overlay;
 import bisq.desktop.main.overlays.notifications.Notification;
 import bisq.desktop.main.overlays.notifications.NotificationCenter;
 import bisq.desktop.main.overlays.popups.Popup;
+import bisq.desktop.main.overlays.popups.PopupManager;
 import bisq.desktop.main.overlays.windows.DisplayAlertMessageWindow;
 import bisq.desktop.main.overlays.windows.TacWindow;
 import bisq.desktop.main.overlays.windows.TorNetworkSettingsWindow;
@@ -310,7 +311,7 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
         setupClockWatcherPopup();
 
         marketPricePresentation.setup();
-        daoPresentation.setup();
+        daoPresentation.init();
         accountPresentation.setup();
         settingsPresentation.setup();
 
@@ -385,13 +386,30 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
         });
         bisqSetup.setSpvFileCorruptedHandler(msg -> new Popup().warning(msg)
                 .actionButtonText(Res.get("settings.net.reSyncSPVChainButton"))
-                .onAction(() -> GUIUtil.reSyncSPVChain(preferences))
+                .onAction(GUIUtil::reSyncSPVChain)
                 .show());
         bisqSetup.setVoteResultExceptionHandler(voteResultException -> log.warn(voteResultException.toString()));
 
         bisqSetup.setChainFileLockedExceptionHandler(msg -> new Popup().warning(msg)
                 .useShutDownButton()
                 .show());
+
+        bisqSetup.setDiskSpaceWarningHandler(msg -> {
+            if (PopupManager.isNoPopupDisplayed()) {
+                new Popup().warning(msg).show();
+            }
+        });
+        bisqSetup.setOfferDisabledHandler(msg -> {
+            new Notification().headLine("Offer Disabled")
+                    .notification(msg)
+                    .autoClose()
+                    .show();
+        });
+        bisqSetup.setChainNotSyncedHandler(msg -> {
+            if (PopupManager.isNoPopupDisplayed()) {
+                new Popup().warning(msg).show();
+            }
+        });
         bisqSetup.setLockedUpFundsHandler(msg -> {
             // repeated popups of the same message text can be stopped by selecting the "Dont show again" checkbox
             String key = Hex.encode(Hash.getSha256Ripemd160hash(msg.getBytes(Charsets.UTF_8)));
@@ -483,7 +501,7 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
                     .show();
         });
 
-        bisqSetup.setDaoRequiresRestartHandler(() -> new Popup().warning(Res.get("popup.warn.daoRequiresRestart"))
+        bisqSetup.setResyncDaoStateFromResourcesHandler(() -> new Popup().warning(Res.get("popup.warn.daoRequiresRestart"))
                 .useShutDownButton()
                 .hideCloseButton()
                 .show());
@@ -505,7 +523,7 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
                 .show());
 
         bisqSetup.getBtcSyncProgress().addListener((observable, oldValue, newValue) -> updateBtcSyncProgress());
-        daoPresentation.getBsqSyncProgress().addListener((observable, oldValue, newValue) -> updateBtcSyncProgress());
+        daoPresentation.getDaoStateSyncProgress().addListener((observable, oldValue, newValue) -> updateBtcSyncProgress());
 
         bisqSetup.setFilterWarningHandler(warning -> new Popup().warning(warning).show());
 
@@ -523,7 +541,7 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
         } else {
             p2PService.addP2PServiceListener(new BootstrapListener() {
                 @Override
-                public void onUpdatedDataReceived() {
+                public void onDataReceived() {
                     setupInvalidOpenOffersHandler();
                 }
             });
@@ -623,7 +641,12 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
             @Override
             public void onAwakeFromStandby(long missedMs) {
                 if (missedMs > TimeUnit.SECONDS.toMillis(10)) {
-                    String key = "clockWatcherWarning";
+                    log.warn("UI thread has been blocked for {} sec", (int) missedMs / 1000);
+
+                    // See: https://github.com/bisq-network/bisq/issues/6703
+                    // Keep original code as once the blocking UI thread issue is
+                    // fixed (https://github.com/bisq-network/bisq/issues/6704) we can re-enable it.
+                   /* String key = "clockWatcherWarning";
                     if (DontShowAgainLookup.showAgain(key)) {
                         new Popup().warning(Res.get("mainView.networkWarning.clockWatcher", missedMs / 1000))
                                 .actionButtonText(Res.get("shared.iUnderstand"))
@@ -631,7 +654,7 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
                                 .dontShowAgainId(key)
                                 .hideCloseButton()
                                 .show();
-                    }
+                    }*/
                 }
             }
         };
@@ -681,7 +704,7 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
             } else {
                 p2PService.addP2PServiceListener(new BootstrapListener() {
                     @Override
-                    public void onUpdatedDataReceived() {
+                    public void onDataReceived() {
                         accountAgeWitnessService.publishMyAccountAgeWitness(aliPayAccount.getPaymentAccountPayload());
                     }
                 });
@@ -704,7 +727,7 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
         if (btcSyncProgress.doubleValue() < 1) {
             combinedSyncProgress.set(btcSyncProgress.doubleValue());
         } else {
-            combinedSyncProgress.set(daoPresentation.getBsqSyncProgress().doubleValue());
+            combinedSyncProgress.set(daoPresentation.getDaoStateSyncProgress().doubleValue());
         }
     }
 
@@ -783,7 +806,7 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
 
     StringProperty getCombinedFooterInfo() {
         final StringProperty combinedInfo = new SimpleStringProperty();
-        combinedInfo.bind(Bindings.concat(this.footerVersionInfo, " ", daoPresentation.getBsqInfo()));
+        combinedInfo.bind(Bindings.concat(this.footerVersionInfo, " ", daoPresentation.getDaoStateInfo()));
         return combinedInfo;
     }
 
@@ -824,8 +847,8 @@ public class MainViewModel implements ViewModel, BisqSetup.BisqSetupListener {
         return bisqSetup.getP2PNetworkStatusIconId();
     }
 
-    BooleanProperty getUpdatedDataReceived() {
-        return bisqSetup.getUpdatedDataReceived();
+    BooleanProperty getDataReceived() {
+        return bisqSetup.getDataReceived();
     }
 
     StringProperty getP2pNetworkLabelId() {

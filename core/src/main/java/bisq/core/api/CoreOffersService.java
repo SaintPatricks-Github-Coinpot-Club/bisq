@@ -211,9 +211,7 @@ class CoreOffersService {
         var isFiat = isFiatCurrency(upperCaseCurrencyCode);
         if (isFiat) {
             return offerBookService.getOffers().stream()
-                    .filter(o -> !o.isMyOffer(keyRing))
                     .filter(o -> offerMatchesDirectionAndCurrency(o, direction, upperCaseCurrencyCode))
-                    .filter(o -> offerFilterService.canTakeOffer(o, coreContext.isApiUser()).isValid())
                     .sorted(priceComparator(direction, true))
                     .collect(Collectors.toList());
         } else {
@@ -223,10 +221,8 @@ class CoreOffersService {
             // then filter on the currencyCode param (the altcoin code).
             if (apiSupportsCryptoCurrency(upperCaseCurrencyCode))
                 return offerBookService.getOffers().stream()
-                        .filter(o -> !o.isMyOffer(keyRing))
                         .filter(o -> offerMatchesDirectionAndCurrency(o, direction, "BTC"))
                         .filter(o -> o.getBaseCurrencyCode().equalsIgnoreCase(upperCaseCurrencyCode))
-                        .filter(o -> offerFilterService.canTakeOffer(o, coreContext.isApiUser()).isValid())
                         .sorted(priceComparator(direction, false))
                         .collect(Collectors.toList());
             else
@@ -447,6 +443,7 @@ class CoreOffersService {
         openOfferManager.placeOffer(offer,
                 buyerSecurityDepositPct,
                 useSavingsWallet,
+                false,
                 triggerPriceAsLong,
                 resultHandler::accept,
                 log::error);

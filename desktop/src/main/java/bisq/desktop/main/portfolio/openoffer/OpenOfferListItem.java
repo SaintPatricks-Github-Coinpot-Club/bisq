@@ -44,15 +44,16 @@ import lombok.Getter;
 class OpenOfferListItem implements FilterableListItem {
     @Getter
     private final OpenOffer openOffer;
-    private final PriceUtil priceUtil;
     private final CoinFormatter btcFormatter;
     private final BsqFormatter bsqFormatter;
     private final OpenOfferManager openOfferManager;
 
 
-    OpenOfferListItem(OpenOffer openOffer, PriceUtil priceUtil, CoinFormatter btcFormatter, BsqFormatter bsqFormatter, OpenOfferManager openOfferManager) {
+    OpenOfferListItem(OpenOffer openOffer,
+                      CoinFormatter btcFormatter,
+                      BsqFormatter bsqFormatter,
+                      OpenOfferManager openOfferManager) {
         this.openOffer = openOffer;
-        this.priceUtil = priceUtil;
         this.btcFormatter = btcFormatter;
         this.bsqFormatter = bsqFormatter;
         this.openOfferManager = openOfferManager;
@@ -81,12 +82,12 @@ class OpenOfferListItem implements FilterableListItem {
 
     public Double getPriceDeviationAsDouble() {
         Offer offer = getOffer();
-        return priceUtil.getMarketBasedPrice(offer, offer.getMirroredDirection()).orElse(0d);
+        return PriceUtil.offerPercentageToDeviation(offer).orElse(0d);
     }
 
     public String getPriceDeviationAsString() {
         Offer offer = getOffer();
-        return priceUtil.getMarketBasedPrice(offer, offer.getMirroredDirection())
+        return PriceUtil.offerPercentageToDeviation(offer)
                 .map(FormattingUtils::formatPercentagePrice)
                 .orElse("");
     }
@@ -109,10 +110,6 @@ class OpenOfferListItem implements FilterableListItem {
         return DisplayUtils.getDirectionWithCode(direction, getOffer().getCurrencyCode());
     }
 
-    public boolean hasMakerFee() {
-        return getOffer().getMakerFee().isPositive();
-    }
-
     public String getMakerFeeAsString() {
         Offer offer = getOffer();
         return offer.isCurrencyForMakerFeeBtc() ?
@@ -132,6 +129,11 @@ class OpenOfferListItem implements FilterableListItem {
         } else {
             return PriceUtil.formatMarketPrice(triggerPrice, offer.getCurrencyCode());
         }
+    }
+
+    String getMakerFeeTxId() {
+        String makerFeeTxId = getOffer().getOfferFeePaymentTxId();
+        return makerFeeTxId != null ? makerFeeTxId : "";
     }
 
     @Override

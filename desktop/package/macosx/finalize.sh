@@ -2,7 +2,7 @@
 
 cd ../../
 
-version="1.9.6-SNAPSHOT"
+version="1.9.18-SNAPSHOT"
 
 target_dir="releases/$version"
 
@@ -63,9 +63,6 @@ exe="Bisq-$version.exe"
 exe64="Bisq-64bit-$version.exe"
 cp "$win64/$exe" "$target_dir/$exe64"
 
-rpi="jar-lib-for-raspberry-pi-$version.zip"
-cp "$macos/$rpi" "$target_dir/"
-
 cli="bisq-cli-$version.zip"
 daemon="bisq-daemon-$version.zip"
 
@@ -74,10 +71,6 @@ cat "$macos/desktop-$version-all-mac.jar.SHA-256" \
 "$linux64/desktop-$version-all-linux.jar.SHA-256" \
 "$win64/desktop-$version-all-win.jar.SHA-256" > "$target_dir/Bisq-$version.jar.txt"
 
-sed -i '' '1 s_^_macOS: _' "$target_dir/Bisq-$version.jar.txt"
-sed -i '' '2 s_^_linux: _' "$target_dir/Bisq-$version.jar.txt"
-sed -i '' '3 s_^_windows: _' "$target_dir/Bisq-$version.jar.txt"
-
 cd "$target_dir"
 
 echo Create signatures
@@ -85,7 +78,6 @@ gpg --digest-algo SHA256 --local-user "$BISQ_GPG_USER" --output "$dmg.asc" --det
 gpg --digest-algo SHA256 --local-user "$BISQ_GPG_USER" --output "$deb64.asc" --detach-sig --armor "$deb64"
 gpg --digest-algo SHA256 --local-user "$BISQ_GPG_USER" --output "$rpm64.asc" --detach-sig --armor "$rpm64"
 gpg --digest-algo SHA256 --local-user "$BISQ_GPG_USER" --output "$exe64.asc" --detach-sig --armor "$exe64"
-gpg --digest-algo SHA256 --local-user "$BISQ_GPG_USER" --output "$rpi.asc" --detach-sig --armor "$rpi"
 gpg --digest-algo SHA256 --local-user "$BISQ_GPG_USER" --output "$cli.asc" --detach-sig --armor "$cli"
 gpg --digest-algo SHA256 --local-user "$BISQ_GPG_USER" --output "$daemon.asc" --detach-sig --armor "$daemon"
 
@@ -94,7 +86,6 @@ gpg --digest-algo SHA256 --verify $dmg{.asc*,}
 gpg --digest-algo SHA256 --verify $deb64{.asc*,}
 gpg --digest-algo SHA256 --verify $rpm64{.asc*,}
 gpg --digest-algo SHA256 --verify $exe64{.asc*,}
-gpg --digest-algo SHA256 --verify $rpi{.asc*,}
 gpg --digest-algo SHA256 --verify $cli{.asc*,}
 gpg --digest-algo SHA256 --verify $daemon{.asc*,}
 

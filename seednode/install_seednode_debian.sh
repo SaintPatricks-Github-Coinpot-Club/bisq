@@ -7,7 +7,7 @@ echo "[*] Bisq Seednode installation script"
 
 ROOT_USER=root
 ROOT_GROUP=root
-ROOT_PKG="build-essential libtool autotools-dev automake pkg-config bsdmainutils python3 git vim screen ufw"
+ROOT_PKG="build-essential libtool autotools-dev automake pkg-config bsdmainutils python3 git vim screen ufw openjdk-11-jdk"
 ROOT_HOME=/root
 
 SYSTEMD_SERVICE_HOME=/etc/systemd/system
@@ -34,6 +34,8 @@ BITCOIN_P2P_HOST=127.0.0.1
 BITCOIN_P2P_PORT=8333
 BITCOIN_RPC_HOST=127.0.0.1
 BITCOIN_RPC_PORT=8332
+BITCOIN_RPC_BLOCKNOTIFY_HOST=127.0.0.1
+BITCOIN_RPC_BLOCKNOTIFY_PORT=5120
 
 # set below settings to use existing bitcoin node
 #BITCOIN_INSTALL=false
@@ -43,8 +45,10 @@ BITCOIN_RPC_PORT=8332
 #BITCOIN_RPC_PORT=8332
 #BITCOIN_RPC_USER=foo
 #BITCOIN_RPC_PASS=bar
+#BITCOIN_RPC_BLOCKNOTIFY_HOST=0.0.0.0
+#BITCOIN_RPC_BLOCKNOTIFY_PORT=5120
 
-TOR_PKG="tor deb.torproject.org-keyring"
+TOR_PKG="tor"
 TOR_USER=debian-tor
 TOR_GROUP=debian-tor
 TOR_HOME=/etc/tor
@@ -65,8 +69,6 @@ sudo -H -i -u "${ROOT_USER}" git config --global advice.detachedHead false
 sudo -H -i -u "${ROOT_USER}" git clone --branch "${BISQ_REPO_TAG}" "${BISQ_REPO_URL}" "${ROOT_HOME}/${BISQ_REPO_NAME}"
 
 echo "[*] Installing Tor"
-sudo -H -i -u "${ROOT_USER}" wget -qO- https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc | gpg --dearmor | tee /usr/share/keyrings/tor-archive-keyring.gpg >/dev/null
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/tor-archive-keyring.gpg] https://deb.torproject.org/torproject.org focal main" | sudo -H -i -u "${ROOT_USER}" tee /etc/apt/sources.list.d/tor.list
 sudo -H -i -u "${ROOT_USER}" DEBIAN_FRONTEND=noninteractive apt-get update -q
 sudo -H -i -u "${ROOT_USER}" DEBIAN_FRONTEND=noninteractive apt-get install -qq -y ${TOR_PKG}
 
@@ -122,19 +124,24 @@ echo "[*] Moving Bisq repo"
 sudo -H -i -u "${ROOT_USER}" mv "${ROOT_HOME}/${BISQ_REPO_NAME}" "${BISQ_HOME}/${BISQ_REPO_NAME}"
 sudo -H -i -u "${ROOT_USER}" chown -R "${BISQ_USER}:${BISQ_GROUP}" "${BISQ_HOME}/${BISQ_REPO_NAME}"
 
-echo "[*] Installing OpenJDK 11.0.2 from Bisq repo"
-sudo -H -i -u "${ROOT_USER}" "${BISQ_HOME}/${BISQ_REPO_NAME}/scripts/install_java_linux.sh"
-
 echo "[*] Installing Bisq init script"
 sudo -H -i -u "${ROOT_USER}" install -c -o "${ROOT_USER}" -g "${ROOT_GROUP}" -m 644 "${BISQ_HOME}/${BISQ_REPO_NAME}/seednode/bisq.service" "${SYSTEMD_SERVICE_HOME}/bisq.service"
 if [ "${BITCOIN_INSTALL}" = true ];then
+    sudo sed -i -e "s/After=network.target/After=bitcoin.service/" "${SYSTEMD_SERVICE_HOME}/bisq.service"
 	sudo sed -i -e "s/#Requires=bitcoin.service/Requires=bitcoin.service/" "${SYSTEMD_SERVICE_HOME}/bisq.service"
 	sudo sed -i -e "s/#BindsTo=bitcoin.service/BindsTo=bitcoin.service/" "${SYSTEMD_SERVICE_HOME}/bisq.service"
 fi
 sudo sed -i -e "s/__BISQ_REPO_NAME__/${BISQ_REPO_NAME}/" "${SYSTEMD_SERVICE_HOME}/bisq.service"
 sudo sed -i -e "s!__BISQ_HOME__!${BISQ_HOME}!" "${SYSTEMD_SERVICE_HOME}/bisq.service"
 
-echo "[*] Installing Bisq environment file with Bitcoin RPC credentials"
+echo "[*] Generating ECDSA key for BM oracle node"
+key=$(openssl ecparam -name secp256k1 -genkey)
+# Extract the private key in hex format
+BISQ_BM_ORACLE_NODE_PRIVKEY=$(echo "$key" | openssl ec -text -noout 2>/dev/null | awk '/priv:/{flag=1;next}/pub:/{flag=0}flag' | tr -d ' \n:')
+# Extract the compressed public key in hex format
+BISQ_BM_ORACLE_NODE_PUBKEY=$(echo "$key" | openssl ec -pubout -conv_form compressed -outform DER 2>/dev/null | tail -c 33 | xxd -p | tr -d '\n')
+
+echo "[*] Installing Bisq environment file"
 sudo -H -i -u "${ROOT_USER}" install -c -o "${ROOT_USER}" -g "${ROOT_GROUP}" -m 644 "${BISQ_HOME}/${BISQ_REPO_NAME}/seednode/bisq.env" "${SYSTEMD_ENV_HOME}/bisq.env"
 sudo sed -i -e "s/__BITCOIN_P2P_HOST__/${BITCOIN_P2P_HOST}/" "${SYSTEMD_ENV_HOME}/bisq.env"
 sudo sed -i -e "s/__BITCOIN_P2P_PORT__/${BITCOIN_P2P_PORT}/" "${SYSTEMD_ENV_HOME}/bisq.env"
@@ -142,8 +149,12 @@ sudo sed -i -e "s/__BITCOIN_RPC_HOST__/${BITCOIN_RPC_HOST}/" "${SYSTEMD_ENV_HOME
 sudo sed -i -e "s/__BITCOIN_RPC_PORT__/${BITCOIN_RPC_PORT}/" "${SYSTEMD_ENV_HOME}/bisq.env"
 sudo sed -i -e "s/__BITCOIN_RPC_USER__/${BITCOIN_RPC_USER}/" "${SYSTEMD_ENV_HOME}/bisq.env"
 sudo sed -i -e "s/__BITCOIN_RPC_PASS__/${BITCOIN_RPC_PASS}/" "${SYSTEMD_ENV_HOME}/bisq.env"
+sudo sed -i -e "s/__BITCOIN_RPC_BLOCKNOTIFY_HOST__/${BITCOIN_RPC_BLOCKNOTIFY_HOST}/" "${SYSTEMD_ENV_HOME}/bisq.env"
+sudo sed -i -e "s/__BITCOIN_RPC_BLOCKNOTIFY_PORT__/${BITCOIN_RPC_BLOCKNOTIFY_PORT}/" "${SYSTEMD_ENV_HOME}/bisq.env"
 sudo sed -i -e "s!__BISQ_APP_NAME__!${BISQ_APP_NAME}!" "${SYSTEMD_ENV_HOME}/bisq.env"
 sudo sed -i -e "s!__BISQ_HOME__!${BISQ_HOME}!" "${SYSTEMD_ENV_HOME}/bisq.env"
+sudo sed -i -e "s!__BISQ_BM_ORACLE_NODE_PUBKEY__!${BISQ_BM_ORACLE_NODE_PUBKEY}!" "${SYSTEMD_ENV_HOME}/bisq.env"
+sudo sed -i -e "s!__BISQ_BM_ORACLE_NODE_PRIVKEY__!${BISQ_BM_ORACLE_NODE_PRIVKEY}!" "${SYSTEMD_ENV_HOME}/bisq.env"
 
 echo "[*] Checking out Bisq ${BISQ_LATEST_RELEASE}"
 sudo -H -i -u "${BISQ_USER}" sh -c "cd ${BISQ_HOME}/${BISQ_REPO_NAME} && git checkout ${BISQ_LATEST_RELEASE}"

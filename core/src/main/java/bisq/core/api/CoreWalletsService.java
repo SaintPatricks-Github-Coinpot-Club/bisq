@@ -40,6 +40,7 @@ import bisq.core.btc.wallet.BsqWalletService;
 import bisq.core.btc.wallet.BtcWalletService;
 import bisq.core.btc.wallet.TxBroadcaster;
 import bisq.core.btc.wallet.WalletsManager;
+import bisq.core.dao.DaoFacade;
 import bisq.core.provider.fee.FeeService;
 import bisq.core.user.Preferences;
 import bisq.core.util.FormattingUtils;
@@ -48,8 +49,7 @@ import bisq.core.util.coin.CoinFormatter;
 
 import bisq.common.Timer;
 import bisq.common.UserThread;
-import bisq.common.handlers.ResultHandler;
-import bisq.common.util.Utilities;
+import bisq.common.util.SingleThreadExecutorUtils;
 
 import org.bitcoinj.core.Address;
 import org.bitcoinj.core.Coin;
@@ -68,10 +68,7 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
-import com.google.common.util.concurrent.MoreExecutors;
 
 import org.bouncycastle.crypto.params.KeyParameter;
 
@@ -108,6 +105,7 @@ class CoreWalletsService {
     private final BtcWalletService btcWalletService;
     private final CoinFormatter btcFormatter;
     private final FeeService feeService;
+    private final DaoFacade daoFacade;
     private final Preferences preferences;
 
     @Nullable
@@ -116,7 +114,7 @@ class CoreWalletsService {
     @Nullable
     private KeyParameter tempAesKey;
 
-    private final ListeningExecutorService executor = Utilities.getSingleThreadListeningExecutor("CoreWalletsService");
+    private final ListeningExecutorService executor = SingleThreadExecutorUtils.getSingleThreadListeningExecutor("CoreWalletsService");
 
     @Inject
     public CoreWalletsService(AppStartupState appStartupState,
@@ -129,6 +127,7 @@ class CoreWalletsService {
                               BtcWalletService btcWalletService,
                               @Named(FormattingUtils.BTC_FORMATTER_KEY) CoinFormatter btcFormatter,
                               FeeService feeService,
+                              DaoFacade daoFacade,
                               Preferences preferences) {
         this.appStartupState = appStartupState;
         this.coreContext = coreContext;
@@ -140,6 +139,7 @@ class CoreWalletsService {
         this.btcWalletService = btcWalletService;
         this.btcFormatter = btcFormatter;
         this.feeService = feeService;
+        this.daoFacade = daoFacade;
         this.preferences = preferences;
     }
 
@@ -163,6 +163,10 @@ class CoreWalletsService {
             default:
                 return "mainnet";
         }
+    }
+
+    boolean isDaoStateReadyAndInSync() {
+        return daoFacade.isDaoStateReadyAndInSync();
     }
 
     BalancesInfo getBalances(String currencyCode) {
@@ -289,6 +293,7 @@ class CoreWalletsService {
             //  See WithdrawalView # onWithdraw (and refactor).
             Transaction feeEstimationTransaction =
                     btcWalletService.getFeeEstimationTransactionForMultipleAddresses(fromAddresses,
+                            address,
                             receiverAmount,
                             txFeePerVbyte);
             if (feeEstimationTransaction == null)
@@ -360,33 +365,7 @@ class CoreWalletsService {
         return numMatches > 0;
     }
 
-    void getTxFeeRate(ResultHandler resultHandler) {
-        try {
-            @SuppressWarnings({"unchecked", "Convert2MethodRef"})
-            ListenableFuture<Void> future =
-                    (ListenableFuture<Void>) executor.submit(() -> feeService.requestFees());
-            //noinspection NullableProblems
-            Futures.addCallback(future, new FutureCallback<>() {
-                @Override
-                public void onSuccess(@Nullable Void ignored) {
-                    resultHandler.handleResult();
-                }
-
-                @Override
-                public void onFailure(Throwable t) {
-                    log.error("", t);
-                    throw new IllegalStateException("could not request fees from fee service", t);
-                }
-            }, MoreExecutors.directExecutor());
-
-        } catch (Exception ex) {
-            log.error(ex.toString());
-            throw new IllegalStateException("could not request fees from fee service", ex);
-        }
-    }
-
-    void setTxFeeRatePreference(long txFeeRate,
-                                ResultHandler resultHandler) {
+    void setTxFeeRatePreference(long txFeeRate) {
         long minFeePerVbyte = feeService.getMinFeePerVByte();
         if (txFeeRate < minFeePerVbyte)
             throw new IllegalArgumentException(
@@ -395,12 +374,10 @@ class CoreWalletsService {
         preferences.setUseCustomWithdrawalTxFee(true);
         Coin satsPerByte = Coin.valueOf(txFeeRate);
         preferences.setWithdrawalTxFeeInVbytes(satsPerByte.value);
-        getTxFeeRate(resultHandler);
     }
 
-    void unsetTxFeeRatePreference(ResultHandler resultHandler) {
+    void unsetTxFeeRatePreference() {
         preferences.setUseCustomWithdrawalTxFee(false);
-        getTxFeeRate(resultHandler);
     }
 
     TxFeeRateInfo getMostRecentTxFeeRateInfo() {
@@ -410,6 +387,10 @@ class CoreWalletsService {
                 feeService.getMinFeePerVByte(),
                 feeService.getTxFeePerVbyte().value,
                 feeService.getLastRequest());
+    }
+
+    Set<Transaction> getTransactions() {
+        return btcWalletService.getTransactions(false);
     }
 
     Transaction getTransaction(String txId) {

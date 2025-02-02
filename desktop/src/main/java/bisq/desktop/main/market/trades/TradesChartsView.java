@@ -25,6 +25,7 @@ import bisq.desktop.components.AutoTooltipTableColumn;
 import bisq.desktop.components.AutoTooltipToggleButton;
 import bisq.desktop.components.AutocompleteComboBox;
 import bisq.desktop.components.ColoredDecimalPlacesWithZerosText;
+import bisq.desktop.components.paymentmethods.ArsBlueRatePopup;
 import bisq.desktop.main.market.trades.charts.price.CandleStickChart;
 import bisq.desktop.main.market.trades.charts.volume.VolumeChart;
 import bisq.desktop.util.CurrencyListItem;
@@ -33,6 +34,7 @@ import bisq.desktop.util.GUIUtil;
 
 import bisq.core.locale.CurrencyUtil;
 import bisq.core.locale.Res;
+import bisq.core.locale.TradeCurrency;
 import bisq.core.monetary.Price;
 import bisq.core.trade.statistics.TradeStatistics3;
 import bisq.core.user.CookieKey;
@@ -52,6 +54,8 @@ import com.googlecode.jcsv.writer.CSVEntryConverter;
 
 import javax.inject.Inject;
 import javax.inject.Named;
+
+import com.google.common.collect.Lists;
 
 import com.jfoenix.controls.JFXTabPane;
 
@@ -85,7 +89,6 @@ import org.fxmisc.easybind.EasyBind;
 import org.fxmisc.easybind.Subscription;
 import org.fxmisc.easybind.monadic.MonadicBinding;
 
-import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.beans.value.ChangeListener;
@@ -308,7 +311,12 @@ public class TradesChartsView extends ActivatableViewAndModel<VBox, TradesCharts
                 currencyComboBox.getSelectionModel().select(SHOW_ALL);
             CurrencyListItem selectedItem = currencyComboBox.getSelectionModel().getSelectedItem();
             if (selectedItem != null) {
-                model.onSetTradeCurrency(selectedItem.tradeCurrency);
+                TradeCurrency selectedCurrency = selectedItem.tradeCurrency;
+                model.onSetTradeCurrency(selectedCurrency);
+
+                if (ArsBlueRatePopup.isTradeCurrencyArgentinePesos(selectedCurrency)) {
+                    ArsBlueRatePopup.showMaybe();
+                }
             }
         });
 
@@ -389,13 +397,15 @@ public class TradesChartsView extends ActivatableViewAndModel<VBox, TradesCharts
 
     private void fillList() {
         long ts = System.currentTimeMillis();
-        CompletableFuture.supplyAsync(() -> {
-            return model.tradeStatisticsByCurrency.stream()
-                    .map(tradeStatistics -> new TradeStatistics3ListItem(tradeStatistics,
-                            coinFormatter,
-                            model.showAllTradeCurrenciesProperty.get()))
-                    .collect(Collectors.toCollection(FXCollections::observableArrayList));
-        }).whenComplete((listItems, throwable) -> {
+        boolean showAllTradeCurrencies = model.showAllTradeCurrenciesProperty.get();
+        // Collect the list items in reverse chronological order, as this is the likely
+        // order 'sortedList' will place them in - this skips most of its (slow) sorting.
+        CompletableFuture.supplyAsync(() -> Lists.reverse(model.tradeStatisticsByCurrency).stream()
+                .map(tradeStatistics -> new TradeStatistics3ListItem(tradeStatistics,
+                        coinFormatter,
+                        showAllTradeCurrencies))
+                .collect(Collectors.toCollection(FXCollections::observableArrayList))
+        ).whenComplete((listItems, throwable) -> {
             log.debug("Creating listItems took {} ms", System.currentTimeMillis() - ts);
 
             long ts2 = System.currentTimeMillis();
@@ -640,7 +650,7 @@ public class TradesChartsView extends ActivatableViewAndModel<VBox, TradesCharts
         return new StringConverter<>() {
             @Override
             public String toString(Number object) {
-                long index = MathUtils.doubleToLong((double) object);
+                int index = object.intValue();
                 // The last tick is on the chart edge, it is not well spaced with
                 // the previous tick and interferes with its label.
                 if (MAX_TICKS + 1 == index) return "";
@@ -755,7 +765,7 @@ public class TradesChartsView extends ActivatableViewAndModel<VBox, TradesCharts
             }
         };
         dateColumn.getStyleClass().addAll("number-column", "first-column");
-        dateColumn.setCellValueFactory((tradeStatistics) -> new ReadOnlyObjectWrapper<>(tradeStatistics.getValue()));
+        dateColumn.setCellValueFactory(tradeStatistics -> tradeStatistics.getValue().asObservableValue());
         dateColumn.setCellFactory(
                 new Callback<>() {
                     @Override
@@ -784,7 +794,7 @@ public class TradesChartsView extends ActivatableViewAndModel<VBox, TradesCharts
             }
         };
         marketColumn.getStyleClass().add("number-column");
-        marketColumn.setCellValueFactory((tradeStatistics) -> new ReadOnlyObjectWrapper<>(tradeStatistics.getValue()));
+        marketColumn.setCellValueFactory(tradeStatistics -> tradeStatistics.getValue().asObservableValue());
         marketColumn.setCellFactory(
                 new Callback<>() {
                     @Override
@@ -808,7 +818,7 @@ public class TradesChartsView extends ActivatableViewAndModel<VBox, TradesCharts
         // price
         priceColumn = new TableColumn<>();
         priceColumn.getStyleClass().add("number-column");
-        priceColumn.setCellValueFactory((tradeStatistics) -> new ReadOnlyObjectWrapper<>(tradeStatistics.getValue()));
+        priceColumn.setCellValueFactory(tradeStatistics -> tradeStatistics.getValue().asObservableValue());
         priceColumn.setCellFactory(
                 new Callback<>() {
                     @Override
@@ -832,7 +842,7 @@ public class TradesChartsView extends ActivatableViewAndModel<VBox, TradesCharts
         // amount
         TableColumn<TradeStatistics3ListItem, TradeStatistics3ListItem> amountColumn = new AutoTooltipTableColumn<>(Res.get("shared.amountWithCur", Res.getBaseCurrencyCode()));
         amountColumn.getStyleClass().add("number-column");
-        amountColumn.setCellValueFactory((tradeStatistics) -> new ReadOnlyObjectWrapper<>(tradeStatistics.getValue()));
+        amountColumn.setCellValueFactory(tradeStatistics -> tradeStatistics.getValue().asObservableValue());
         amountColumn.setCellFactory(
                 new Callback<>() {
                     @Override
@@ -857,7 +867,7 @@ public class TradesChartsView extends ActivatableViewAndModel<VBox, TradesCharts
         // volume
         volumeColumn = new TableColumn<>();
         volumeColumn.getStyleClass().add("number-column");
-        volumeColumn.setCellValueFactory((tradeStatistics) -> new ReadOnlyObjectWrapper<>(tradeStatistics.getValue()));
+        volumeColumn.setCellValueFactory(tradeStatistics -> tradeStatistics.getValue().asObservableValue());
         volumeColumn.setCellFactory(
                 new Callback<>() {
                     @Override
@@ -881,7 +891,7 @@ public class TradesChartsView extends ActivatableViewAndModel<VBox, TradesCharts
         // paymentMethod
         TableColumn<TradeStatistics3ListItem, TradeStatistics3ListItem> paymentMethodColumn = new AutoTooltipTableColumn<>(Res.get("shared.paymentMethod"));
         paymentMethodColumn.getStyleClass().add("number-column");
-        paymentMethodColumn.setCellValueFactory((tradeStatistics) -> new ReadOnlyObjectWrapper<>(tradeStatistics.getValue()));
+        paymentMethodColumn.setCellValueFactory(tradeStatistics -> tradeStatistics.getValue().asObservableValue());
         paymentMethodColumn.setCellFactory(
                 new Callback<>() {
                     @Override

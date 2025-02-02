@@ -20,18 +20,18 @@ package bisq.core.provider.price;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
-import static junit.framework.TestCase.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@Ignore
+@Disabled
 public class MarketPriceFeedServiceTest {
     private static final Logger log = LoggerFactory.getLogger(MarketPriceFeedServiceTest.class);
 
     @Test
     public void testGetPrice() throws InterruptedException {
-        PriceFeedService priceFeedService = new PriceFeedService(null, null, null);
+        PriceFeedService priceFeedService = new PriceFeedService(null, null, null, null);
         priceFeedService.setCurrencyCode("EUR");
         priceFeedService.requestPriceFeed(tradeCurrency -> {
                     log.debug(tradeCurrency.toString());

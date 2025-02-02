@@ -39,6 +39,7 @@ import bisq.desktop.components.paymentmethods.HalCashForm;
 import bisq.desktop.components.paymentmethods.ImpsForm;
 import bisq.desktop.components.paymentmethods.InteracETransferForm;
 import bisq.desktop.components.paymentmethods.JapanBankTransferForm;
+import bisq.desktop.components.paymentmethods.MercadoPagoForm;
 import bisq.desktop.components.paymentmethods.MoneseForm;
 import bisq.desktop.components.paymentmethods.MoneyBeamForm;
 import bisq.desktop.components.paymentmethods.MoneyGramForm;
@@ -57,6 +58,7 @@ import bisq.desktop.components.paymentmethods.RevolutForm;
 import bisq.desktop.components.paymentmethods.RtgsForm;
 import bisq.desktop.components.paymentmethods.SameBankForm;
 import bisq.desktop.components.paymentmethods.SatispayForm;
+import bisq.desktop.components.paymentmethods.SbpForm;
 import bisq.desktop.components.paymentmethods.SepaForm;
 import bisq.desktop.components.paymentmethods.SepaInstantForm;
 import bisq.desktop.components.paymentmethods.SpecificBankForm;
@@ -74,6 +76,7 @@ import bisq.desktop.components.paymentmethods.WeChatPayForm;
 import bisq.desktop.components.paymentmethods.WesternUnionForm;
 import bisq.desktop.main.account.content.PaymentAccountsView;
 import bisq.desktop.main.overlays.popups.Popup;
+import bisq.desktop.main.overlays.windows.ImportBisq2ProfileIdWindow;
 import bisq.desktop.util.FormBuilder;
 import bisq.desktop.util.GUIUtil;
 import bisq.desktop.util.Layout;
@@ -94,6 +97,7 @@ import bisq.desktop.util.validation.PerfectMoneyValidator;
 import bisq.desktop.util.validation.PopmoneyValidator;
 import bisq.desktop.util.validation.PromptPayValidator;
 import bisq.desktop.util.validation.RevolutValidator;
+import bisq.desktop.util.validation.SbpValidator;
 import bisq.desktop.util.validation.SwishValidator;
 import bisq.desktop.util.validation.TransferwiseValidator;
 import bisq.desktop.util.validation.USPostalMoneyOrderValidator;
@@ -184,6 +188,7 @@ public class FiatAccountsView extends PaymentAccountsView<GridPane, FiatAccounts
     private final PromptPayValidator promptPayValidator;
     private final AdvancedCashValidator advancedCashValidator;
     private final TransferwiseValidator transferwiseValidator;
+    private final SbpValidator sbpValidator;
     private final CoinFormatter formatter;
     private ComboBox<PaymentMethod> paymentMethodComboBox;
     private PaymentMethodForm paymentMethodForm;
@@ -215,6 +220,7 @@ public class FiatAccountsView extends PaymentAccountsView<GridPane, FiatAccounts
                             PromptPayValidator promptPayValidator,
                             AdvancedCashValidator advancedCashValidator,
                             TransferwiseValidator transferwiseValidator,
+                            SbpValidator sbpValidator,
                             AccountAgeWitnessService accountAgeWitnessService,
                             KeyRing keyRing,
                             @Named(FormattingUtils.BTC_FORMATTER_KEY) CoinFormatter formatter) {
@@ -245,6 +251,7 @@ public class FiatAccountsView extends PaymentAccountsView<GridPane, FiatAccounts
         this.promptPayValidator = promptPayValidator;
         this.advancedCashValidator = advancedCashValidator;
         this.transferwiseValidator = transferwiseValidator;
+        this.sbpValidator = sbpValidator;
         this.formatter = formatter;
     }
 
@@ -315,7 +322,7 @@ public class FiatAccountsView extends PaymentAccountsView<GridPane, FiatAccounts
                     .onAction(() -> {
                         final String currencyName = Config.baseCurrencyNetwork().getCurrencyName();
                         if (paymentAccount instanceof ClearXchangeAccount) {
-                            new Popup().information(Res.get("payment.clearXchange.info", currencyName, currencyName))
+                            new Popup().information(Res.get("payment.clearXchange.info"))
                                     .width(900)
                                     .closeButtonText(Res.get("shared.cancel"))
                                     .actionButtonText(Res.get("shared.iConfirm"))
@@ -357,14 +364,14 @@ public class FiatAccountsView extends PaymentAccountsView<GridPane, FiatAccounts
                                     .onAction(() -> doSaveNewAccount(paymentAccount))
                                     .show();
                         } else if (paymentAccount instanceof AustraliaPayidAccount) {
-                            new Popup().information(Res.get("payment.payid.info", currencyName, currencyName))
+                            new Popup().information(Res.get("payment.payid.info"))
                                     .width(900)
                                     .closeButtonText(Res.get("shared.cancel"))
                                     .actionButtonText(Res.get("shared.iConfirm"))
                                     .onAction(() -> doSaveNewAccount(paymentAccount))
                                     .show();
                         } else if (paymentAccount instanceof AmazonGiftCardAccount) {
-                            new Popup().information(Res.get("payment.amazonGiftCard.info", currencyName, currencyName))
+                            new Popup().information(Res.get("payment.amazonGiftCard.info"))
                                     .width(900)
                                     .closeButtonText(Res.get("shared.cancel"))
                                     .actionButtonText(Res.get("shared.iUnderstand"))
@@ -529,34 +536,50 @@ public class FiatAccountsView extends PaymentAccountsView<GridPane, FiatAccounts
 
     private void onExportAccountAgeForBisq2(PaymentAccount paymentAccount) {
         String prefix = "BISQ2_ACCOUNT_AGE:";
-        try {
-            String profileId = getProfileIdFromClipBoard(prefix);
-            AccountAgeWitnessUtils.signAccountAgeAndBisq2ProfileId(accountAgeWitnessService, paymentAccount, keyRing, profileId)
-                    .ifPresent(json -> {
-                        Utilities.copyToClipboard(prefix + json);
-                        new Popup().information(Res.get("account.fiat.exportAccountAge.popup", json))
-                                .width(900).show();
-                    });
-        } catch (Exception e) {
-            String error = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            new Popup().warning(error).show();
-        }
+        ImportBisq2ProfileIdWindow popup = new ImportBisq2ProfileIdWindow();
+        popup.headLine(Res.get("account.fiat.exportAccountAge"))
+                .setProfileId(getProfileIdFromClipBoard(prefix))
+                .actionButtonText(Res.get("shared.nextStep"))
+                .onAction(() -> {
+                    try {
+                        AccountAgeWitnessUtils.signAccountAgeAndBisq2ProfileId(
+                                        accountAgeWitnessService, paymentAccount, keyRing, popup.getProfileId())
+                                .ifPresent(json -> {
+                                    Utilities.copyToClipboard(prefix + json);
+                                    new Popup().information(Res.get("account.fiat.exportAccountAge.popup", json))
+                                            .width(900)
+                                            .show();
+                                });
+                    } catch (Exception e) {
+                        String error = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
+                        new Popup().warning(error).show();
+                    }
+                })
+                .show();
     }
 
     private void onExportSignedWitnessForBisq2(PaymentAccount paymentAccount) {
         String prefix = "BISQ2_SIGNED_WITNESS:";
-        try {
-            String profileId = getProfileIdFromClipBoard(prefix);
-            AccountAgeWitnessUtils.signSignedWitnessAndBisq2ProfileId(accountAgeWitnessService, paymentAccount, keyRing, profileId)
-                    .ifPresent(json -> {
-                        Utilities.copyToClipboard(prefix + json);
-                        new Popup().information(Res.get("account.fiat.signedWitness.popup", json))
-                                .width(900).show();
-                    });
-        } catch (Exception e) {
-            String error = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            new Popup().warning(error).show();
-        }
+        ImportBisq2ProfileIdWindow popup = new ImportBisq2ProfileIdWindow();
+        popup.headLine(Res.get("account.fiat.signedWitness"))
+                .setProfileId(getProfileIdFromClipBoard(prefix))
+                .actionButtonText(Res.get("shared.nextStep"))
+                .onAction(() -> {
+                    try {
+                        AccountAgeWitnessUtils.signSignedWitnessAndBisq2ProfileId(
+                                        accountAgeWitnessService, paymentAccount, keyRing, popup.getProfileId())
+                                .ifPresent(json -> {
+                                    Utilities.copyToClipboard(prefix + json);
+                                    new Popup().information(Res.get("account.fiat.signedWitness.popup", json))
+                                            .width(900)
+                                            .show();
+                                });
+                    } catch (Exception e) {
+                        String error = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
+                        new Popup().warning(error).show();
+                    }
+                })
+                .show();
     }
 
     private String getProfileIdFromClipBoard(String prefix) {
@@ -568,7 +591,7 @@ public class FiatAccountsView extends PaymentAccountsView<GridPane, FiatAccounts
                 return profileId;
             }
         }
-        throw new RuntimeException("Clipboard text not in expected format. " + clipboardText);
+        return "";  // clipboard did not contain the expected hash, user will have option to enter it manually
     }
 
 
@@ -690,6 +713,10 @@ public class FiatAccountsView extends PaymentAccountsView<GridPane, FiatAccounts
                 return new AchTransferForm(paymentAccount, accountAgeWitnessService, inputValidator, root, gridRow, formatter);
             case PaymentMethod.DOMESTIC_WIRE_TRANSFER_ID:
                 return new DomesticWireTransferForm(paymentAccount, accountAgeWitnessService, inputValidator, root, gridRow, formatter);
+            case PaymentMethod.MERCADO_PAGO_ID:
+                return new MercadoPagoForm(paymentAccount, accountAgeWitnessService, inputValidator, root, gridRow, formatter);
+            case PaymentMethod.SBP_ID:
+                return new SbpForm(paymentAccount, accountAgeWitnessService, sbpValidator, inputValidator, root, gridRow, formatter);
             default:
                 log.error("Not supported PaymentMethod: " + paymentMethod);
                 return null;

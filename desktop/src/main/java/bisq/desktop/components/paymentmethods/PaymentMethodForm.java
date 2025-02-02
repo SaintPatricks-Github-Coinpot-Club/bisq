@@ -118,8 +118,13 @@ public abstract class PaymentMethodForm {
             }
         });
         currencyComboBox.setOnAction(e -> {
-            paymentAccount.setSingleTradeCurrency(currencyComboBox.getSelectionModel().getSelectedItem());
+            TradeCurrency selectedCurrency = currencyComboBox.getSelectionModel().getSelectedItem();
+            paymentAccount.setSingleTradeCurrency(selectedCurrency);
             updateFromInputs();
+
+            if (ArsBlueRatePopup.isTradeCurrencyArgentinePesos(selectedCurrency)) {
+                ArsBlueRatePopup.show();
+            }
         });
     }
 
@@ -299,19 +304,32 @@ public abstract class PaymentMethodForm {
                                       TradeCurrency e, PaymentAccount paymentAccount) {
         CheckBox checkBox = new AutoTooltipCheckBox(e.getCode());
         checkBox.setMouseTransparent(!isEditable);
-        checkBox.setSelected(paymentAccount.getTradeCurrencies().contains(e));
+
+        boolean isCurrencySelected = paymentAccount.getTradeCurrencies().contains(e);
+        checkBox.setSelected(isCurrencySelected);
+
         checkBox.setMinWidth(60);
         checkBox.setMaxWidth(checkBox.getMinWidth());
         checkBox.setTooltip(new Tooltip(e.getName()));
         checkBox.setOnAction(event -> {
-            if (checkBox.isSelected())
+            if (checkBox.isSelected()) {
                 paymentAccount.addCurrency(e);
-            else
+
+                if (ArsBlueRatePopup.isTradeCurrencyArgentinePesos(e)) {
+                    ArsBlueRatePopup.show();
+                }
+
+            } else {
                 paymentAccount.removeCurrency(e);
+            }
 
             updateAllInputsValid();
         });
         flowPane.getChildren().add(checkBox);
+
+        if (isCurrencySelected && ArsBlueRatePopup.isTradeCurrencyArgentinePesos(e)) {
+            ArsBlueRatePopup.show();
+        }
     }
 
     protected abstract void autoFillNameTextField();

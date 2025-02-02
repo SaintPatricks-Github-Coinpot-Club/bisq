@@ -17,6 +17,8 @@
 
 package bisq.core.alert;
 
+import bisq.core.crypto.LowRSigningKey;
+
 import bisq.network.p2p.DecryptedMessageWithPubKey;
 import bisq.network.p2p.NodeAddress;
 import bisq.network.p2p.P2PService;
@@ -106,7 +108,7 @@ public class PrivateNotificationManager implements MessageListener {
             this.mailboxMessageService.addDecryptedMailboxListener(this::handleMessage);
         }
         pubKeyAsHex = useDevPrivilegeKeys ?
-                DevEnv.DEV_PRIVILEGE_PUB_KEY :
+                DevEnv.getDEV_PRIVILEGE_PUB_KEY() :
                 "02ba7c5de295adfe57b60029f3637a2c6b1d0e969a8aaefb9e0ddc3a7963f26925";
     }
 
@@ -175,7 +177,7 @@ public class PrivateNotificationManager implements MessageListener {
 
     private void signAndAddSignatureToPrivateNotificationMessage(PrivateNotificationPayload privateNotification) {
         String privateNotificationMessageAsHex = Utils.HEX.encode(privateNotification.getMessage().getBytes(Charsets.UTF_8));
-        String signatureAsBase64 = privateNotificationSigningKey.signMessage(privateNotificationMessageAsHex);
+        String signatureAsBase64 = LowRSigningKey.from(privateNotificationSigningKey).signMessage(privateNotificationMessageAsHex);
         privateNotification.setSigAndPubKey(signatureAsBase64, keyRing.getSignatureKeyPair().getPublic());
     }
 

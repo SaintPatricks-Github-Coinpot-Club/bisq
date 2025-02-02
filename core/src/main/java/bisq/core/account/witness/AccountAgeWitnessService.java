@@ -214,7 +214,7 @@ public class AccountAgeWitnessService {
         } else {
             p2PService.addP2PServiceListener(new BootstrapListener() {
                 @Override
-                public void onUpdatedDataReceived() {
+                public void onDataReceived() {
                     onBootStrapped();
                 }
             });
@@ -597,11 +597,11 @@ public class AccountAgeWitnessService {
         // TOLERATED_SMALL_TRADE_AMOUNT (0.01 BTC) and only in that case return false.
         return findWitness(offer)
                 .map(witness -> verifyPeersTradeLimit(offer, tradeAmount, witness, new Date(), errorMessageHandler))
-                .orElse(isToleratedSmalleAmount(tradeAmount));
+                .orElse(isToleratedSmallestAmount(tradeAmount));
     }
 
-    private boolean isToleratedSmalleAmount(Coin tradeAmount) {
-        return tradeAmount.value <= OfferRestrictions.TOLERATED_SMALL_TRADE_AMOUNT.value;
+    private boolean isToleratedSmallestAmount(Coin tradeAmount) {
+        return tradeAmount.value >= OfferRestrictions.TOLERATED_SMALL_TRADE_AMOUNT.value;
     }
 
 
@@ -744,18 +744,18 @@ public class AccountAgeWitnessService {
     }
 
     public Optional<SignedWitness> traderSignAndPublishPeersAccountAgeWitness(Trade trade) {
-        AccountAgeWitness peersWitness = findTradePeerWitness(trade).orElse(null);
-        Coin tradeAmount = trade.getAmount();
-        checkNotNull(trade.getProcessModel().getTradePeer().getPubKeyRing(), "Peer must have a keyring");
-        PublicKey peersPubKey = trade.getProcessModel().getTradePeer().getPubKeyRing().getSignaturePubKey();
-        checkNotNull(peersWitness, "Not able to find peers witness, unable to sign for trade {}",
-                trade.toString());
-        checkNotNull(tradeAmount, "Trade amount must not be null");
-        checkNotNull(peersPubKey, "Peers pub key must not be null");
-
         try {
+            AccountAgeWitness peersWitness = findTradePeerWitness(trade).orElse(null);
+            Coin tradeAmount = trade.getAmount();
+            checkNotNull(trade.getProcessModel().getTradePeer().getPubKeyRing(), "Peer must have a keyring");
+            PublicKey peersPubKey = trade.getProcessModel().getTradePeer().getPubKeyRing().getSignaturePubKey();
+            checkNotNull(peersWitness, "Not able to find peers witness, unable to sign for trade {}",
+                    trade.toString());
+            checkNotNull(tradeAmount, "Trade amount must not be null");
+            checkNotNull(peersPubKey, "Peers pub key must not be null");
+
             return signedWitnessService.signAndPublishAccountAgeWitness(tradeAmount, peersWitness, peersPubKey);
-        } catch (CryptoException e) {
+        } catch (Exception e) {
             log.warn("Trader failed to sign witness, exception {}", e.toString());
         }
         return Optional.empty();
@@ -930,17 +930,21 @@ public class AccountAgeWitnessService {
     }
 
     public boolean isSignWitnessTrade(Trade trade) {
-        checkNotNull(trade, "trade must not be null");
-        checkNotNull(trade.getOffer(), "offer must not be null");
-        Contract contract = checkNotNull(trade.getContract());
-        PaymentAccountPayload sellerPaymentAccountPayload = contract.getSellerPaymentAccountPayload();
-        AccountAgeWitness myWitness = getMyWitness(sellerPaymentAccountPayload);
-
-        getAccountAgeWitnessUtils().witnessDebugLog(trade, myWitness);
-
-        return accountIsSigner(myWitness) &&
-                !peerHasSignedWitness(trade) &&
-                tradeAmountIsSufficient(trade.getAmount());
+        try {
+            checkNotNull(trade, "trade must not be null");
+            checkNotNull(trade.getOffer(), "offer must not be null");
+            Contract contract = checkNotNull(trade.getContract());
+            PaymentAccountPayload sellerPaymentAccountPayload = checkNotNull(
+                    contract.getSellerPaymentAccountPayload(), "paymentAccountPayload must not be null");
+            AccountAgeWitness myWitness = getMyWitness(sellerPaymentAccountPayload);
+            getAccountAgeWitnessUtils().witnessDebugLog(trade, myWitness);
+            return accountIsSigner(myWitness) &&
+                    !peerHasSignedWitness(trade) &&
+                    tradeAmountIsSufficient(trade.getAmount());
+        } catch (NullPointerException e) {
+            e.printStackTrace();
+        }
+        return false;
     }
 
     public String getSignInfoFromAccount(PaymentAccount paymentAccount) {

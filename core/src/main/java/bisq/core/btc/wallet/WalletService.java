@@ -24,6 +24,7 @@ import bisq.core.btc.listeners.BalanceListener;
 import bisq.core.btc.listeners.TxConfidenceListener;
 import bisq.core.btc.setup.WalletsSetup;
 import bisq.core.btc.wallet.http.MemPoolSpaceTxBroadcaster;
+import bisq.core.crypto.LowRSigningKey;
 import bisq.core.provider.fee.FeeService;
 import bisq.core.user.Preferences;
 
@@ -105,6 +106,9 @@ import javax.annotation.Nullable;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static org.bitcoinj.core.TransactionConfidence.ConfidenceType.BUILDING;
+import static org.bitcoinj.core.TransactionConfidence.ConfidenceType.DEAD;
+import static org.bitcoinj.core.TransactionConfidence.ConfidenceType.PENDING;
 
 /**
  * Abstract base class for BTC and BSQ wallet. Provides all non-trade specific functionality.
@@ -291,7 +295,8 @@ public abstract class WalletService {
                 continue;
             }
             if (!connectedOutput.isMine(wallet)) {
-                log.error("connectedOutput is not mine");
+                log.info("ConnectedOutput is not mine. This can be the case for BSQ transactions where the " +
+                        "input gets signed by the other wallet. connectedOutput={}", connectedOutput);
                 continue;
             }
 
@@ -332,8 +337,9 @@ public abstract class WalletService {
             txIn = partialTx.getInput(index);
             if (txIn.getConnectedOutput() != null) {
                 // If we don't have a sig we don't do the check to avoid error reports of failed sig checks
-                final List<ScriptChunk> chunks = txIn.getConnectedOutput().getScriptPubKey().getChunks();
-                if (!chunks.isEmpty() && chunks.get(0).data != null && chunks.get(0).data.length > 0) {
+                List<ScriptChunk> chunks = txIn.getConnectedOutput().getScriptPubKey().getChunks();
+                byte[] pushData;
+                if (!chunks.isEmpty() && (pushData = chunks.get(0).data) != null && pushData.length > 0) {
                     try {
                         // We assume if it's already signed, it's hopefully got a SIGHASH type that will not invalidate when
                         // we sign missing pieces (to check this would require either assuming any signatures are signing
@@ -354,8 +360,8 @@ public abstract class WalletService {
                 if (pubKey instanceof DeterministicKey)
                     propTx.keyPaths.put(scriptPubKey, (((DeterministicKey) pubKey).getPath()));
 
-                ECKey key;
-                if ((key = redeemData.getFullKey()) == null) {
+                ECKey key = LowRSigningKey.from(redeemData.getFullKey());
+                if (key == null) {
                     log.warn("No local key found for input {}", index);
                     return;
                 }
@@ -439,15 +445,31 @@ public abstract class WalletService {
     public TransactionConfidence getConfidenceForAddress(Address address) {
         List<TransactionConfidence> transactionConfidenceList = new ArrayList<>();
         if (wallet != null) {
-            Set<Transaction> transactions = getAddressToMatchingTxSetMultiset().get(address);
+            Set<Transaction> transactions = getAddressToMatchingTxSetMultimap().get(address);
             transactionConfidenceList.addAll(transactions.stream().map(tx ->
                     getTransactionConfidence(tx, address)).collect(Collectors.toList()));
         }
         return getMostRecentConfidence(transactionConfidenceList);
     }
 
-    private SetMultimap<Address, Transaction> getAddressToMatchingTxSetMultiset() {
-        return addressToMatchingTxSetCache.updateAndGet(set -> set != null ? set : computeAddressToMatchingTxSetMultimap());
+    @Nullable
+    public TransactionConfidence getConfidenceForAddressFromBlockHeight(Address address, long targetHeight) {
+        List<TransactionConfidence> transactionConfidenceList = new ArrayList<>();
+        if (wallet != null) {
+            Set<Transaction> transactions = getAddressToMatchingTxSetMultimap().get(address);
+            // "acceptable confidence" is either a new (pending) Tx, or a Tx confirmed after target block height
+            transactionConfidenceList.addAll(transactions.stream()
+                    .map(tx -> getTransactionConfidence(tx, address))
+                    .filter(Objects::nonNull)
+                    .filter(con -> con.getConfidenceType() == PENDING ||
+                            (con.getConfidenceType() == BUILDING && con.getAppearedAtChainHeight() > targetHeight))
+                    .collect(Collectors.toList()));
+        }
+        return getMostRecentConfidence(transactionConfidenceList);
+    }
+
+    private SetMultimap<Address, Transaction> getAddressToMatchingTxSetMultimap() {
+        return addressToMatchingTxSetCache.updateAndGet(map -> map != null ? map : computeAddressToMatchingTxSetMultimap());
     }
 
     private SetMultimap<Address, Transaction> computeAddressToMatchingTxSetMultimap() {
@@ -462,12 +484,13 @@ public abstract class WalletService {
     }
 
     @Nullable
-    public TransactionConfidence getConfidenceForTxId(String txId) {
-        if (wallet != null) {
-            Set<Transaction> transactions = wallet.getTransactions(false);
-            for (Transaction tx : transactions) {
-                if (tx.getTxId().toString().equals(txId))
-                    return tx.getConfidence();
+    public TransactionConfidence getConfidenceForTxId(@Nullable String txId) {
+        if (wallet != null && txId != null && !txId.isEmpty()) {
+            Sha256Hash hash = Sha256Hash.wrap(txId);
+            Transaction tx = getTransaction(hash);
+            TransactionConfidence confidence;
+            if (tx != null && (confidence = tx.getConfidence()).getConfidenceType() != DEAD) {
+                return confidence;
             }
         }
         return null;
@@ -508,11 +531,9 @@ public abstract class WalletService {
         TransactionConfidence transactionConfidence = null;
         for (TransactionConfidence confidence : transactionConfidenceList) {
             if (confidence != null) {
-                if (transactionConfidence == null ||
-                        confidence.getConfidenceType().equals(TransactionConfidence.ConfidenceType.PENDING) ||
-                        (confidence.getConfidenceType().equals(TransactionConfidence.ConfidenceType.BUILDING) &&
-                                transactionConfidence.getConfidenceType().equals(
-                                        TransactionConfidence.ConfidenceType.BUILDING) &&
+                if (transactionConfidence == null || confidence.getConfidenceType() == PENDING ||
+                        (confidence.getConfidenceType() == BUILDING &&
+                                transactionConfidence.getConfidenceType() == BUILDING &&
                                 confidence.getDepthInBlocks() < transactionConfidence.getDepthInBlocks())) {
                     transactionConfidence = confidence;
                 }
@@ -602,7 +623,7 @@ public abstract class WalletService {
         for (TransactionOutput transactionOutput : proposedTransaction.getOutputs()) {
             if (transactionOutput.getValue().isLessThan(Restrictions.getMinNonDustOutput())) {
                 dust = dust.add(transactionOutput.getValue());
-                log.info("Dust TXO = {}", transactionOutput.toString());
+                log.info("Dust TXO = {}", transactionOutput);
             }
         }
         return dust;
@@ -632,13 +653,13 @@ public abstract class WalletService {
         Futures.addCallback(sendResult.broadcastComplete, new FutureCallback<>() {
             @Override
             public void onSuccess(Transaction result) {
-                log.info("emptyBtcWallet onSuccess Transaction=" + result);
+                log.info("emptyBtcWallet onSuccess Transaction={}", result);
                 resultHandler.handleResult();
             }
 
             @Override
             public void onFailure(@NotNull Throwable t) {
-                log.error("emptyBtcWallet onFailure " + t.toString());
+                log.error("emptyBtcWallet onFailure " + t);
                 errorMessageHandler.handleErrorMessage(t.getMessage());
             }
         }, MoreExecutors.directExecutor());
@@ -658,7 +679,7 @@ public abstract class WalletService {
     }
 
     public int getBestChainHeight() {
-        final BlockChain chain = walletsSetup.getChain();
+        BlockChain chain = walletsSetup.getChain();
         return isWalletReady() && chain != null ? chain.getBestChainHeight() : 0;
     }
 
@@ -684,13 +705,13 @@ public abstract class WalletService {
     }
 
     public void addNewBestBlockListener(NewBestBlockListener listener) {
-        final BlockChain chain = walletsSetup.getChain();
+        BlockChain chain = walletsSetup.getChain();
         if (isWalletReady() && chain != null)
             chain.addNewBestBlockListener(listener);
     }
 
     public void removeNewBestBlockListener(NewBestBlockListener listener) {
-        final BlockChain chain = walletsSetup.getChain();
+        BlockChain chain = walletsSetup.getChain();
         if (isWalletReady() && chain != null)
             chain.removeNewBestBlockListener(listener);
     }
@@ -719,6 +740,10 @@ public abstract class WalletService {
 
     public boolean isEncrypted() {
         return wallet.isEncrypted();
+    }
+
+    public List<Transaction> getAllRecentTransactions(boolean includeDead) {
+        return getRecentTransactions(Integer.MAX_VALUE, includeDead);
     }
 
     public List<Transaction> getRecentTransactions(int numTransactions, boolean includeDead) {
@@ -760,7 +785,7 @@ public abstract class WalletService {
     }
 
     @Nullable
-    public Transaction getTransaction(String txId) {
+    public Transaction getTransaction(@Nullable String txId) {
         if (txId == null) {
             return null;
         }
@@ -831,7 +856,7 @@ public abstract class WalletService {
     /**
      * @param serializedTransaction The serialized transaction to be added to the wallet
      * @return The transaction we added to the wallet, which is different as the one we passed as argument!
-     * @throws VerificationException
+     * @throws VerificationException if the transaction could not be parsed or fails sanity checks
      */
     public static Transaction maybeAddTxToWallet(byte[] serializedTransaction,
                                                  Wallet wallet,
