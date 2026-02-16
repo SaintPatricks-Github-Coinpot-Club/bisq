@@ -24,6 +24,7 @@ import bisq.core.btc.wallet.BsqWalletService;
 import bisq.core.btc.wallet.BtcWalletService;
 import bisq.core.btc.wallet.WalletService;
 import bisq.core.dao.DaoFacade;
+import bisq.core.dao.state.model.governance.IssuanceType;
 import bisq.core.dao.state.model.blockchain.TxType;
 import bisq.core.locale.Res;
 import bisq.core.trade.model.bsq_swap.BsqSwapTrade;
@@ -48,6 +49,9 @@ import static com.google.common.base.Preconditions.checkNotNull;
 @EqualsAndHashCode(callSuper = true)
 @Getter
 class BsqTxListItem extends TxConfidenceListItem {
+    private static final String BSQ_SWAP_TX_TYPE_FOR_EXPORT = "BSQ_SWAP";
+    private static final String COMPENSATION_ISSUANCE_TX_TYPE_FOR_EXPORT = "ISSUANCE_FROM_COMPENSATION_REQUEST";
+    private static final String REIMBURSEMENT_ISSUANCE_TX_TYPE_FOR_EXPORT = "ISSUANCE_FROM_REIMBURSEMENT_REQUEST";
     private final DaoFacade daoFacade;
     private final BsqFormatter bsqFormatter;
     private final Date date;
@@ -169,5 +173,27 @@ class BsqTxListItem extends TxConfidenceListItem {
     boolean isBsqSwapTx() {
         return getOptionalBsqTrade().isPresent();
     }
-}
 
+    boolean isCompensationIssuanceTx() {
+        return getTxType() == TxType.COMPENSATION_REQUEST &&
+                daoFacade.isIssuanceTx(txId, IssuanceType.COMPENSATION);
+    }
+
+    boolean isReimbursementIssuanceTx() {
+        return getTxType() == TxType.REIMBURSEMENT_REQUEST &&
+                daoFacade.isIssuanceTx(txId, IssuanceType.REIMBURSEMENT);
+    }
+
+    String getTxTypeForExport() {
+        if (isBsqSwapTx())
+            return BSQ_SWAP_TX_TYPE_FOR_EXPORT;
+
+        if (isCompensationIssuanceTx())
+            return COMPENSATION_ISSUANCE_TX_TYPE_FOR_EXPORT;
+
+        if (isReimbursementIssuanceTx())
+            return REIMBURSEMENT_ISSUANCE_TX_TYPE_FOR_EXPORT;
+
+        return getTxType().name();
+    }
+}
