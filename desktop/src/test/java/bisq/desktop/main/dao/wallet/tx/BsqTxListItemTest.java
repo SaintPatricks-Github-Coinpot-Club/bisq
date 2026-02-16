@@ -18,6 +18,8 @@
 package bisq.desktop.main.dao.wallet.tx;
 
 import bisq.core.dao.state.model.blockchain.TxType;
+import bisq.core.dao.state.model.governance.IssuanceType;
+import bisq.core.payment.payload.PaymentMethod;
 
 import org.junit.jupiter.api.Test;
 
@@ -32,13 +34,15 @@ public class BsqTxListItemTest {
         BsqTxListItem item = spy(new BsqTxListItem());
         doReturn(true).when(item).isBsqSwapTx();
 
-        assertEquals("BSQ_SWAP", item.getTxTypeForExport());
+        assertEquals(PaymentMethod.BSQ_SWAP_ID, item.getTxTypeForExport());
     }
 
     @Test
     public void getTxTypeForExport_returnsRegularTxType_forNonBsqSwapTx() {
         BsqTxListItem item = spy(new BsqTxListItem());
         doReturn(false).when(item).isBsqSwapTx();
+        doReturn(false).when(item).isCompensationIssuanceTx();
+        doReturn(false).when(item).isReimbursementIssuanceTx();
         doReturn(TxType.PAY_TRADE_FEE).when(item).getTxType();
 
         assertEquals("PAY_TRADE_FEE", item.getTxTypeForExport());
@@ -50,8 +54,9 @@ public class BsqTxListItemTest {
         doReturn(false).when(item).isBsqSwapTx();
         doReturn(true).when(item).isCompensationIssuanceTx();
         doReturn(false).when(item).isReimbursementIssuanceTx();
+        doReturn(TxType.COMPENSATION_REQUEST).when(item).getTxType();
 
-        assertEquals("ISSUANCE_FROM_COMPENSATION_REQUEST", item.getTxTypeForExport());
+        assertEquals(getIssuanceTypeForExport(IssuanceType.COMPENSATION), item.getTxTypeForExport());
     }
 
     @Test
@@ -60,7 +65,12 @@ public class BsqTxListItemTest {
         doReturn(false).when(item).isBsqSwapTx();
         doReturn(false).when(item).isCompensationIssuanceTx();
         doReturn(true).when(item).isReimbursementIssuanceTx();
+        doReturn(TxType.REIMBURSEMENT_REQUEST).when(item).getTxType();
 
-        assertEquals("ISSUANCE_FROM_REIMBURSEMENT_REQUEST", item.getTxTypeForExport());
+        assertEquals(getIssuanceTypeForExport(IssuanceType.REIMBURSEMENT), item.getTxTypeForExport());
+    }
+
+    private static String getIssuanceTypeForExport(IssuanceType issuanceType) {
+        return "ISSUANCE_FROM_" + issuanceType.name() + "_REQUEST";
     }
 }
