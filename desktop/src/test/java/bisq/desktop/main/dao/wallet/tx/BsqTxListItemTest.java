@@ -41,9 +41,9 @@ public class BsqTxListItemTest {
     public void getTxTypeForExport_returnsRegularTxType_forNonBsqSwapTx() {
         BsqTxListItem item = spy(new BsqTxListItem());
         doReturn(false).when(item).isBsqSwapTx();
-        doReturn(false).when(item).isCompensationIssuanceTx();
-        doReturn(false).when(item).isReimbursementIssuanceTx();
         doReturn(TxType.PAY_TRADE_FEE).when(item).getTxType();
+        doReturn(false).when(item).isCompensationIssuanceTx(TxType.PAY_TRADE_FEE);
+        doReturn(false).when(item).isReimbursementIssuanceTx(TxType.PAY_TRADE_FEE);
 
         assertEquals("PAY_TRADE_FEE", item.getTxTypeForExport());
     }
@@ -52,9 +52,8 @@ public class BsqTxListItemTest {
     public void getTxTypeForExport_returnsCompensationIssuance_forCompensationIssuanceTx() {
         BsqTxListItem item = spy(new BsqTxListItem());
         doReturn(false).when(item).isBsqSwapTx();
-        doReturn(true).when(item).isCompensationIssuanceTx();
-        doReturn(false).when(item).isReimbursementIssuanceTx();
         doReturn(TxType.COMPENSATION_REQUEST).when(item).getTxType();
+        doReturn(true).when(item).isCompensationIssuanceTx(TxType.COMPENSATION_REQUEST);
 
         assertEquals(getIssuanceTypeForExport(IssuanceType.COMPENSATION), item.getTxTypeForExport());
     }
@@ -63,9 +62,9 @@ public class BsqTxListItemTest {
     public void getTxTypeForExport_returnsReimbursementIssuance_forReimbursementIssuanceTx() {
         BsqTxListItem item = spy(new BsqTxListItem());
         doReturn(false).when(item).isBsqSwapTx();
-        doReturn(false).when(item).isCompensationIssuanceTx();
-        doReturn(true).when(item).isReimbursementIssuanceTx();
         doReturn(TxType.REIMBURSEMENT_REQUEST).when(item).getTxType();
+        doReturn(false).when(item).isCompensationIssuanceTx(TxType.REIMBURSEMENT_REQUEST);
+        doReturn(true).when(item).isReimbursementIssuanceTx(TxType.REIMBURSEMENT_REQUEST);
 
         assertEquals(getIssuanceTypeForExport(IssuanceType.REIMBURSEMENT), item.getTxTypeForExport());
     }

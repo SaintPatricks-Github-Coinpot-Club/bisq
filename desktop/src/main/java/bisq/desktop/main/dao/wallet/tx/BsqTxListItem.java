@@ -175,12 +175,20 @@ class BsqTxListItem extends TxConfidenceListItem {
     }
 
     boolean isCompensationIssuanceTx() {
-        return getTxType() == TxType.COMPENSATION_REQUEST &&
+        return isCompensationIssuanceTx(getTxType());
+    }
+
+    boolean isCompensationIssuanceTx(TxType txType) {
+        return txType == TxType.COMPENSATION_REQUEST &&
                 daoFacade.isIssuanceTx(txId, IssuanceType.COMPENSATION);
     }
 
     boolean isReimbursementIssuanceTx() {
-        return getTxType() == TxType.REIMBURSEMENT_REQUEST &&
+        return isReimbursementIssuanceTx(getTxType());
+    }
+
+    boolean isReimbursementIssuanceTx(TxType txType) {
+        return txType == TxType.REIMBURSEMENT_REQUEST &&
                 daoFacade.isIssuanceTx(txId, IssuanceType.REIMBURSEMENT);
     }
 
@@ -189,10 +197,10 @@ class BsqTxListItem extends TxConfidenceListItem {
             return PaymentMethod.BSQ_SWAP_ID;
 
         TxType txType = getTxType();
-        if (isCompensationIssuanceTx())
+        if (isCompensationIssuanceTx(txType))
             return getIssuanceTxTypeForExport(IssuanceType.COMPENSATION);
 
-        if (isReimbursementIssuanceTx())
+        if (isReimbursementIssuanceTx(txType))
             return getIssuanceTxTypeForExport(IssuanceType.REIMBURSEMENT);
 
         return txType.name();
