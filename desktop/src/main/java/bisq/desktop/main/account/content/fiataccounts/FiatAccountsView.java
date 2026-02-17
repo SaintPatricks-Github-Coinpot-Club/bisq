@@ -451,6 +451,7 @@ public class FiatAccountsView extends PaymentAccountsView<GridPane, FiatAccounts
         paymentMethodComboBox.setPrefWidth(250);
         List<PaymentMethod> list = PaymentMethod.getPaymentMethods().stream()
                 .filter(PaymentMethod::isFiat)
+                .filter(paymentMethod -> !paymentMethod.getId().equals(PaymentMethod.VERSE_ID)) // Verse not existing anymore
                 .sorted()
                 .collect(Collectors.toList());
         paymentMethodComboBox.setItems(FXCollections.observableArrayList(list));
